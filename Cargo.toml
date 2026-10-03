@@ -5,3 +5,8 @@ edition = "2021"
 description = "Single-user routing core. No mesh, account, or network stack."
 
 [dependencies]
+prost = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3"

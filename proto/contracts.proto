@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package ai_smart_maps;
+
+// Field names match the published JSON schemas. Enum-like fields keep the
+// schema's string values. A person is not a field on these messages.
+
+message Node {
+  string id = 1;
+  double lat = 2;
+  double lon = 3;
+}
+
+message Edge {
+  string id = 1;
+  string src = 2;
+  string dst = 3;
+  double weight = 4;
+  string constraint = 5;
+  string source = 6;
+  optional double hazard = 7;
+  optional string valid_from = 8;
+  optional string valid_to = 9;
+}
+
+message Graph {
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+}
+
+message Tile {
+  string id = 1;
+  string observed_at = 2;
+  Graph graph = 3;
+  optional string signature = 4;
+}
+
+message Report {
+  string id = 1;
+  string observed_at = 2;
+  string edge_id = 3;
+  string kind = 4;
+  optional string detail = 5;
+}
+
+message Confidence {
+  double score = 1;
+  double map_age_days = 2;
+  uint32 report_count = 3;
+  string model_version_id = 4;
+  string route_novelty = 5;
+  string environment = 6;
+}
+
+message ModelVersion {
+  string id = 1;
+  string role = 2;
+  string artifact = 3;
+  string created_at = 4;
+  optional string previous_id = 5;
+}
+
+message Route {
+  repeated string edge_ids = 1;
+  string model_version_id = 2;
+  Confidence confidence = 3;
+}
