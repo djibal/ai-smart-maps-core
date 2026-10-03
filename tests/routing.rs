@@ -81,7 +81,10 @@ fn closed_and_out_of_window_edges_are_excluded() {
 fn equal_cost_picks_the_smaller_edge_id_sequence() {
     let graph = Graph {
         nodes: vec![node("a"), node("c")],
-        edges: vec![edge("m", "a", "c", 5.0, None), edge("b", "a", "c", 5.0, None)],
+        edges: vec![
+            edge("m", "a", "c", 5.0, None),
+            edge("b", "a", "c", 5.0, None),
+        ],
     };
     let route = Router::new()
         .route(&graph, &request("a", "c"))
@@ -193,7 +196,10 @@ fn adapters_emit_the_graph_type_and_the_router_source_does_not_name_them() {
 fn deterministic_cost_is_what_the_path_uses() {
     let graph = Graph {
         nodes: vec![node("a"), node("c")],
-        edges: vec![edge("cheap", "a", "c", 1.0, None), edge("dear", "a", "c", 9.0, None)],
+        edges: vec![
+            edge("cheap", "a", "c", 1.0, None),
+            edge("dear", "a", "c", 9.0, None),
+        ],
     };
     let route = Router::new()
         .route(&graph, &request("a", "c"))

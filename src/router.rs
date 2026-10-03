@@ -6,9 +6,11 @@
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+use std::time::Instant;
 
 use crate::confidence::{Confidence, Environment, RouteNovelty};
 use crate::graph::{Constraint, Edge, Graph};
+use crate::log::{DiagnosticLog, ErrorCode};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Route {
@@ -34,6 +36,7 @@ pub struct Request<'a> {
 #[derive(Default)]
 pub struct Router {
     cache: HashMap<(String, String, String), Route>,
+    log: DiagnosticLog,
 }
 
 impl Router {
@@ -41,20 +44,33 @@ impl Router {
         Self::default()
     }
 
+    pub fn diagnostics(&self) -> &DiagnosticLog {
+        &self.log
+    }
+
     /// Returns the stored route when the origin, destination, and tile id
     /// match. Otherwise computes one. An unreachable destination returns
-    /// `None` and is not cached.
+    /// `None` and is not cached. Either outcome is written to the diagnostic
+    /// log as edge ids, a duration, and an error code.
     pub fn route(&mut self, graph: &Graph, request: &Request<'_>) -> Option<Route> {
+        let started = Instant::now();
         let key = (
             request.origin.to_string(),
             request.destination.to_string(),
             request.tile_id.to_string(),
         );
         if let Some(stored) = self.cache.get(&key) {
-            return Some(stored.clone());
+            let found = stored.clone();
+            self.log.record(&found.edge_ids, started.elapsed(), None);
+            return Some(found);
         }
-        let found = compute(graph, request)?;
+        let Some(found) = compute(graph, request) else {
+            self.log
+                .record(&[], started.elapsed(), Some(ErrorCode::Unreachable));
+            return None;
+        };
         self.cache.insert(key, found.clone());
+        self.log.record(&found.edge_ids, started.elapsed(), None);
         Some(found)
     }
 }
@@ -118,7 +134,9 @@ where
 
     while let Some(state) = heap.pop() {
         match best.get(&state.node) {
-            Some((cost, path)) if state.cost > *cost || (state.cost == *cost && state.path != *path) => {
+            Some((cost, path))
+                if state.cost > *cost || (state.cost == *cost && state.path != *path) =>
+            {
                 continue;
             }
             None => continue,
@@ -137,7 +155,8 @@ where
             let replace = match best.get(&edge.dst) {
                 None => true,
                 Some((cost, path)) => {
-                    next_cost < *cost || (next_cost == *cost && next_path.as_slice() < path.as_slice())
+                    next_cost < *cost
+                        || (next_cost == *cost && next_path.as_slice() < path.as_slice())
                 }
             };
             if replace {

@@ -10,3 +10,5 @@ The core boundary encodes graph, tile, report, confidence, model version, and ro
 Local records are sealed with AES-256-GCM. The 32-byte key comes from the caller. Clearing the store deletes the sealed records.
 
 The scorer runs the accepted ONNX bytes on four route features: edge count, weight sum, hazard sum, and missing-hazard count. A byte mismatch runs the previous artifact. The deterministic cost still chooses the route.
+
+Diagnostic logs record edge ids, durations, and error codes. They do not record coordinates, reporter keys, or user ids.

@@ -3,8 +3,10 @@
 //! The deterministic cost remains the choice.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::graph::Graph;
+use crate::log::{DiagnosticLog, ErrorCode};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Features {
@@ -59,11 +61,16 @@ pub fn deterministic_choice<'a>(
 #[derive(Default)]
 pub struct Host {
     bytes_for_version: HashMap<String, Vec<u8>>,
+    log: DiagnosticLog,
 }
 
 impl Host {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn diagnostics(&self) -> &DiagnosticLog {
+        &self.log
     }
 
     pub fn install(&mut self, version_id: &str, bytes: &[u8]) {
@@ -92,6 +99,25 @@ impl Host {
     /// Runs the accepted artifact on the four features. A mismatched claim
     /// runs the previous version's stored bytes, never the presented bytes.
     pub fn score(
+        &mut self,
+        claimed_id: &str,
+        presented: &[u8],
+        previous_id: Option<&str>,
+        features: &Features,
+    ) -> Result<Prediction, ScoreError> {
+        let started = Instant::now();
+        let result = self.score_inner(claimed_id, presented, previous_id, features);
+        let code = match &result {
+            Ok(_) => None,
+            Err(ScoreError::Refused) => Some(ErrorCode::Refused),
+            Err(ScoreError::InvalidArtifact) => Some(ErrorCode::InvalidArtifact),
+            Err(ScoreError::TooSlow) => Some(ErrorCode::TooSlow),
+        };
+        self.log.record(&[], started.elapsed(), code);
+        result
+    }
+
+    fn score_inner(
         &self,
         claimed_id: &str,
         presented: &[u8],
@@ -105,7 +131,7 @@ impl Host {
             .bytes_for_version
             .get(&version_id)
             .ok_or(ScoreError::Refused)?;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let value = infer(bytes, features)?;
         if started.elapsed() > std::time::Duration::from_millis(500) {
             return Err(ScoreError::TooSlow);

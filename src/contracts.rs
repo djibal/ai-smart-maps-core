@@ -108,8 +108,9 @@ pub fn encode_confidence(confidence: &Confidence) -> Result<Vec<u8>, ContractErr
 }
 
 pub fn decode_confidence(bytes: &[u8]) -> Result<Confidence, ContractError> {
-    let message =
-        wire::Confidence::decode(bytes).map_err(|_| ContractError { field: "confidence" })?;
+    let message = wire::Confidence::decode(bytes).map_err(|_| ContractError {
+        field: "confidence",
+    })?;
     confidence_from_wire(message)
 }
 
@@ -125,8 +126,9 @@ pub fn encode_model_version(model: &ModelVersionRecord) -> Result<Vec<u8>, Contr
 }
 
 pub fn decode_model_version(bytes: &[u8]) -> Result<ModelVersionRecord, ContractError> {
-    let message =
-        wire::ModelVersion::decode(bytes).map_err(|_| ContractError { field: "model_version" })?;
+    let message = wire::ModelVersion::decode(bytes).map_err(|_| ContractError {
+        field: "model_version",
+    })?;
     if message.role != "scorer" {
         return Err(ContractError { field: "role" });
     }
@@ -166,11 +168,9 @@ pub fn decode_route(bytes: &[u8]) -> Result<Route, ContractError> {
             .map(|id| required(id, "edge_ids"))
             .collect::<Result<Vec<_>, _>>()?,
         model_version_id: required(message.model_version_id, "model_version_id")?,
-        confidence: confidence_from_wire(
-            message
-                .confidence
-                .ok_or(ContractError { field: "confidence" })?,
-        )?,
+        confidence: confidence_from_wire(message.confidence.ok_or(ContractError {
+            field: "confidence",
+        })?)?,
     })
 }
 
@@ -281,7 +281,9 @@ fn confidence_to_wire(confidence: &Confidence) -> Result<wire::Confidence, Contr
         return Err(ContractError { field: "score" });
     }
     if confidence.map_age_days < 0.0 {
-        return Err(ContractError { field: "map_age_days" });
+        return Err(ContractError {
+            field: "map_age_days",
+        });
     }
     Ok(wire::Confidence {
         score: confidence.score,
@@ -298,7 +300,9 @@ fn confidence_from_wire(message: wire::Confidence) -> Result<Confidence, Contrac
         return Err(ContractError { field: "score" });
     }
     if message.map_age_days < 0.0 {
-        return Err(ContractError { field: "map_age_days" });
+        return Err(ContractError {
+            field: "map_age_days",
+        });
     }
     Ok(Confidence {
         score: message.score,
@@ -340,7 +344,9 @@ fn constraint_from_wire(value: &str) -> Result<Constraint, ContractError> {
     match value {
         "open" => Ok(Constraint::Open),
         "closed" => Ok(Constraint::Closed),
-        _ => Err(ContractError { field: "constraint" }),
+        _ => Err(ContractError {
+            field: "constraint",
+        }),
     }
 }
 
@@ -408,7 +414,9 @@ fn environment_from_wire(value: &str) -> Result<Environment, ContractError> {
     match value {
         "simple" => Ok(Environment::Simple),
         "complex" => Ok(Environment::Complex),
-        _ => Err(ContractError { field: "environment" }),
+        _ => Err(ContractError {
+            field: "environment",
+        }),
     }
 }
 

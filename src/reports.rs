@@ -3,8 +3,10 @@
 //! A reporter key is a device-local identifier, not an account.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::graph::{Constraint, Graph};
+use crate::log::{DiagnosticLog, ErrorCode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -26,6 +28,46 @@ pub struct Observation {
 /// Applies every observation to the matching edge.
 /// Reports for an unknown edge are ignored.
 pub fn apply(graph: &mut Graph, observations: &[Observation]) {
+    let mut log = DiagnosticLog::new();
+    apply_logged(graph, observations, &mut log);
+}
+
+/// Same as [`apply`], and writes edge ids, the duration, and `unknown_edge`
+/// when an observation names an edge that is not in the graph. The reporter
+/// key and the detail text are not written.
+pub fn apply_logged(graph: &mut Graph, observations: &[Observation], log: &mut DiagnosticLog) {
+    let started = Instant::now();
+    let known_ids: Vec<String> = observations
+        .iter()
+        .filter(|observation| {
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.id == observation.edge_id)
+        })
+        .map(|observation| observation.edge_id.clone())
+        .collect();
+    let unknown_ids: Vec<String> = observations
+        .iter()
+        .filter(|observation| {
+            !graph
+                .edges
+                .iter()
+                .any(|edge| edge.id == observation.edge_id)
+        })
+        .map(|observation| observation.edge_id.clone())
+        .collect();
+    apply_groups(graph, observations);
+    let elapsed = started.elapsed();
+    if !known_ids.is_empty() || unknown_ids.is_empty() {
+        log.record(&known_ids, elapsed, None);
+    }
+    if !unknown_ids.is_empty() {
+        log.record(&unknown_ids, elapsed, Some(ErrorCode::UnknownEdge));
+    }
+}
+
+fn apply_groups(graph: &mut Graph, observations: &[Observation]) {
     let mut by_edge: HashMap<&str, Vec<&Observation>> = HashMap::new();
     for observation in observations {
         by_edge

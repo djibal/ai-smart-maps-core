@@ -1,8 +1,8 @@
 use ai_smart_maps_core::confidence::{Confidence, Environment, RouteNovelty};
 use ai_smart_maps_core::contracts::{
-    decode_confidence, decode_graph, decode_model_version, decode_report, decode_route, decode_tile,
-    encode_confidence, encode_graph, encode_model_version, encode_report, encode_route, encode_tile,
-    ModelVersionRecord, ReportRecord, TileRecord,
+    decode_confidence, decode_graph, decode_model_version, decode_report, decode_route,
+    decode_tile, encode_confidence, encode_graph, encode_model_version, encode_report,
+    encode_route, encode_tile, ModelVersionRecord, ReportRecord, TileRecord,
 };
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
 use ai_smart_maps_core::reports::Kind;
@@ -60,7 +60,10 @@ fn graph_tile_report_confidence_model_and_route_round_trip() {
         kind: Kind::Closure,
         detail: Some("lane closed".to_string()),
     };
-    assert_eq!(decode_report(&encode_report(&report).unwrap()).unwrap(), report);
+    assert_eq!(
+        decode_report(&encode_report(&report).unwrap()).unwrap(),
+        report
+    );
 
     let confidence = sample_confidence();
     assert_eq!(

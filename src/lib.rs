@@ -7,6 +7,7 @@ pub mod adapt;
 pub mod confidence;
 pub mod contracts;
 pub mod graph;
+pub mod log;
 pub mod reports;
 pub mod router;
 pub mod scorer;

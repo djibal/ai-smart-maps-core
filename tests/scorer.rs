@@ -37,11 +37,7 @@ fn graph() -> Graph {
 
 #[test]
 fn features_are_the_four_route_numbers() {
-    let found = features(
-        &graph(),
-        &["e1".to_string(), "e2".to_string()],
-    )
-    .unwrap();
+    let found = features(&graph(), &["e1".to_string(), "e2".to_string()]).unwrap();
     assert_eq!(found.edge_count, 2);
     assert_eq!(found.weight_sum, 5.0);
     assert_eq!(found.hazard_sum, 0.5);
