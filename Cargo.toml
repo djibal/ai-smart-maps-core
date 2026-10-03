@@ -6,6 +6,7 @@ description = "Single-user routing core. No mesh, account, or network stack."
 
 [dependencies]
 prost = "0.13"
+aes-gcm = "0.10"
 
 [build-dependencies]
 prost-build = "0.13"
