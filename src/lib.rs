@@ -9,3 +9,4 @@ pub mod contracts;
 pub mod graph;
 pub mod reports;
 pub mod router;
+pub mod scorer;
