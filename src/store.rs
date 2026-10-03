@@ -9,7 +9,10 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 const NONCE_LEN: usize = 12;
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct StoreError;
+pub enum StoreError {
+    Rejected,
+    NotDue,
+}
 
 pub struct LocalStore {
     cipher: Aes256Gcm,
@@ -18,7 +21,7 @@ pub struct LocalStore {
 
 impl LocalStore {
     pub fn open(key: &[u8]) -> Result<Self, StoreError> {
-        let key: [u8; 32] = key.try_into().map_err(|_| StoreError)?;
+        let key: [u8; 32] = key.try_into().map_err(|_| StoreError::Rejected)?;
         Ok(Self {
             cipher: Aes256Gcm::new((&key).into()),
             records: HashMap::new(),
@@ -30,7 +33,7 @@ impl LocalStore {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, plaintext)
-            .map_err(|_| StoreError)?;
+            .map_err(|_| StoreError::Rejected)?;
         let mut stored = nonce.to_vec();
         stored.extend(ciphertext);
         self.records.insert(name.to_string(), stored);
@@ -38,19 +41,32 @@ impl LocalStore {
     }
 
     pub fn get(&self, name: &str) -> Result<Vec<u8>, StoreError> {
-        let stored = self.records.get(name).ok_or(StoreError)?;
+        let stored = self.records.get(name).ok_or(StoreError::Rejected)?;
         if stored.len() < NONCE_LEN {
-            return Err(StoreError);
+            return Err(StoreError::Rejected);
         }
         let (nonce, ciphertext) = stored.split_at(NONCE_LEN);
         self.cipher
             .decrypt(Nonce::from_slice(nonce), ciphertext)
-            .map_err(|_| StoreError)
+            .map_err(|_| StoreError::Rejected)
     }
 
-    /// Deletes the cache, reports, training pairs, and preferences.
+    /// Deletes every sealed record. The key stays until [`Self::rotate`].
     pub fn clear(&mut self) {
         self.records.clear();
+    }
+
+    /// Replaces the key and deletes every sealed record once `age_days` is
+    /// at least 90. The caller supplies that age and the new 32-byte key.
+    /// A shorter age leaves the records and the current key in place.
+    pub fn rotate(&mut self, new_key: &[u8], age_days: u32) -> Result<(), StoreError> {
+        if age_days < 90 {
+            return Err(StoreError::NotDue);
+        }
+        let key: [u8; 32] = new_key.try_into().map_err(|_| StoreError::Rejected)?;
+        self.records.clear();
+        self.cipher = Aes256Gcm::new((&key).into());
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
