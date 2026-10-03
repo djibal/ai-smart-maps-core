@@ -75,3 +75,27 @@ fn a_byte_mismatch_uses_the_previous_version() {
         .accepted_version("scorer-1", b"tampered", None)
         .is_none());
 }
+
+#[test]
+fn the_accepted_onnx_artifact_scores_the_four_features() {
+    let sum = include_bytes!("../fixtures/sum_scorer.onnx");
+    let zero = include_bytes!("../fixtures/zero_scorer.onnx");
+    let found = features(&graph(), &["e1".to_string(), "e2".to_string()]).unwrap();
+    let mut host = Host::new();
+    host.install("scorer-1", sum);
+    host.install("scorer-0", zero);
+
+    let matched = host
+        .score("scorer-1", sum, Some("scorer-0"), &found)
+        .unwrap();
+    assert_eq!(matched.version_id, "scorer-1");
+    assert_eq!(matched.value, 8.5);
+
+    let rolled = host
+        .score("scorer-1", b"tampered", Some("scorer-0"), &found)
+        .unwrap();
+    assert_eq!(rolled.version_id, "scorer-0");
+    assert_eq!(rolled.value, 0.0);
+
+    assert!(host.score("scorer-1", b"tampered", None, &found).is_err());
+}

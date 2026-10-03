@@ -88,4 +88,73 @@ impl Host {
             .get(previous)
             .map(|_| previous.to_string())
     }
+
+    /// Runs the accepted artifact on the four features. A mismatched claim
+    /// runs the previous version's stored bytes, never the presented bytes.
+    pub fn score(
+        &self,
+        claimed_id: &str,
+        presented: &[u8],
+        previous_id: Option<&str>,
+        features: &Features,
+    ) -> Result<Prediction, ScoreError> {
+        let version_id = self
+            .accepted_version(claimed_id, presented, previous_id)
+            .ok_or(ScoreError::Refused)?;
+        let bytes = self
+            .bytes_for_version
+            .get(&version_id)
+            .ok_or(ScoreError::Refused)?;
+        let started = std::time::Instant::now();
+        let value = infer(bytes, features)?;
+        if started.elapsed() > std::time::Duration::from_millis(500) {
+            return Err(ScoreError::TooSlow);
+        }
+        Ok(Prediction { version_id, value })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prediction {
+    pub version_id: String,
+    pub value: f32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ScoreError {
+    Refused,
+    InvalidArtifact,
+    TooSlow,
+}
+
+fn infer(bytes: &[u8], features: &Features) -> Result<f32, ScoreError> {
+    use tract_onnx::prelude::*;
+
+    let model = tract_onnx::onnx()
+        .model_for_read(&mut std::io::Cursor::new(bytes))
+        .map_err(|_| ScoreError::InvalidArtifact)?
+        .into_optimized()
+        .map_err(|_| ScoreError::InvalidArtifact)?
+        .into_runnable()
+        .map_err(|_| ScoreError::InvalidArtifact)?;
+    let input = tract_ndarray::Array2::from_shape_vec(
+        (1, 4),
+        vec![
+            features.edge_count as f32,
+            features.weight_sum as f32,
+            features.hazard_sum as f32,
+            features.hazard_missing as f32,
+        ],
+    )
+    .map_err(|_| ScoreError::InvalidArtifact)?;
+    let outputs = model
+        .run(tvec!(Tensor::from(input).into()))
+        .map_err(|_| ScoreError::InvalidArtifact)?;
+    let view = outputs[0]
+        .to_plain_array_view::<f32>()
+        .map_err(|_| ScoreError::InvalidArtifact)?;
+    view.iter()
+        .copied()
+        .next()
+        .ok_or(ScoreError::InvalidArtifact)
 }
