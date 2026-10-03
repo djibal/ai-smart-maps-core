@@ -1,0 +1,7 @@
+[package]
+name = "ai-smart-maps-core"
+version = "0.1.0"
+edition = "2021"
+description = "Single-user routing core. No mesh, account, or network stack."
+
+[dependencies]
