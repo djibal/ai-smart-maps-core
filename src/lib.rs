@@ -6,4 +6,5 @@
 pub mod adapt;
 pub mod confidence;
 pub mod graph;
+pub mod reports;
 pub mod router;
