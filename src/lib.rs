@@ -4,6 +4,7 @@
 //! adapter, open a network connection, or store an account.
 
 pub mod adapt;
+pub mod budget;
 pub mod confidence;
 pub mod contracts;
 pub mod graph;

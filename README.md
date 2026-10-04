@@ -12,3 +12,5 @@ Local records are sealed with AES-256-GCM. The 32-byte key comes from the caller
 The scorer runs the accepted ONNX bytes on four route features: edge count, weight sum, hazard sum, and missing-hazard count. A byte mismatch runs the previous artifact. The deterministic cost still chooses the route.
 
 Diagnostic logs record edge ids, durations, and error codes. They do not record coordinates, reporter keys, or user ids.
+
+Maps and models share a 2GB budget. An insert that would pass it removes the oldest tile first. The active scorer and its `previous_id` artifact stay while rollback is still required.
