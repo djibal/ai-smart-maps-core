@@ -1,6 +1,7 @@
 //! Shortest path on a graph.
 //!
-//! This module does not import a map adapter. Cost is `weight + 3 * hazard`.
+//! This module does not import a map adapter and does not snap a coordinate.
+//! Cost is `weight + 3 * hazard`.
 //! A missing hazard counts as 0. Equal costs break toward the
 //! lexicographically smaller edge-id sequence.
 
