@@ -1,0 +1,9 @@
+[package]
+name = "ai-smart-maps-shell"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shared screen flow for the platform adapters. It calls the core."
+
+[dependencies]
+ai-smart-maps-core = { path = "../.." }

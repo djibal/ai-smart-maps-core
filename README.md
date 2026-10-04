@@ -30,3 +30,5 @@ Scorer inference must finish within 500 milliseconds. A slower inference is refu
 A local tile may omit a signature. A signature, when present, is Ed25519 over the unsigned tile protobuf and must verify with the 32-byte map-source public key. A fetched tile that fails that check leaves the cache unchanged.
 
 The newest tile whose graph contains both node ids is the one used for those nodes.
+
+The iOS, Android, and web adapters call this core. Each one snaps, draws the returned edge list, and stays under 10% of the core source.

@@ -47,6 +47,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-smart-maps-android"
+version = "0.1.0"
+dependencies = [
+ "ai-smart-maps-core",
+ "ai-smart-maps-shell",
+]
+
+[[package]]
 name = "ai-smart-maps-core"
 version = "0.1.0"
 dependencies = [
@@ -57,6 +65,29 @@ dependencies = [
  "prost-build",
  "protoc-bin-vendored",
  "tract-onnx",
+]
+
+[[package]]
+name = "ai-smart-maps-ios"
+version = "0.1.0"
+dependencies = [
+ "ai-smart-maps-core",
+ "ai-smart-maps-shell",
+]
+
+[[package]]
+name = "ai-smart-maps-shell"
+version = "0.1.0"
+dependencies = [
+ "ai-smart-maps-core",
+]
+
+[[package]]
+name = "ai-smart-maps-web"
+version = "0.1.0"
+dependencies = [
+ "ai-smart-maps-core",
+ "ai-smart-maps-shell",
 ]
 
 [[package]]

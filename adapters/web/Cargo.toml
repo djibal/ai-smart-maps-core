@@ -1,0 +1,12 @@
+[package]
+name = "ai-smart-maps-web"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Web adapter. It calls the core and draws the returned edge list."
+
+[dependencies]
+ai-smart-maps-shell = { path = "../shell" }
+
+[dev-dependencies]
+ai-smart-maps-core = { path = "../.." }
