@@ -14,4 +14,5 @@ pub mod router;
 pub mod scorer;
 pub mod snap;
 pub mod store;
+pub mod tiles;
 pub mod training;

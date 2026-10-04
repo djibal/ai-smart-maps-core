@@ -26,3 +26,7 @@ An initial route must finish within 2 seconds. A reroute must finish within 1 se
 A route is returned from the graph in memory when no network is available. The routing path has no network client and no language model.
 
 Scorer inference must finish within 500 milliseconds. A slower inference is refused.
+
+A local tile may omit a signature. A signature, when present, must pass the caller-supplied map-source check. A fetched tile must carry a signature that passes that check, or the cache is left unchanged. The core does not name a signature scheme.
+
+The newest tile whose graph contains both node ids is the one used for those nodes.
