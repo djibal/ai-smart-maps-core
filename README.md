@@ -14,3 +14,5 @@ The scorer runs the accepted ONNX bytes on four route features: edge count, weig
 Diagnostic logs record edge ids, durations, and error codes. They do not record coordinates, reporter keys, or user ids.
 
 Maps and models share a 2GB budget. An insert that would pass it removes the oldest tile first. The active scorer and its `previous_id` artifact stay while rollback is still required.
+
+A report keeps its detail before 90 days. At 90 days the detail is dropped. After 90 days the report is deleted.

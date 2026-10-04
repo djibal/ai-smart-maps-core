@@ -1,5 +1,5 @@
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
-use ai_smart_maps_core::reports::{apply, Kind, Observation};
+use ai_smart_maps_core::reports::{apply, retain, AgedReport, Kind, Observation};
 
 fn edge(id: &str) -> Edge {
     Edge {
@@ -90,4 +90,35 @@ fn a_hazard_majority_sets_hazard_to_the_reputation_share() {
     let hazard = graph.edges[0].hazard.expect("hazard");
     assert!(hazard > 0.5 && hazard < 1.0);
     assert_eq!(graph.edges[0].constraint, Constraint::Open);
+}
+
+#[test]
+fn detail_drops_at_90_days_and_the_report_is_deleted_after_that() {
+    let mut young = observation(Kind::Hazard, "young");
+    young.detail = Some("lane blocked".to_string());
+    let mut due = observation(Kind::Closure, "due");
+    due.detail = Some("closed tonight".to_string());
+    let mut old = observation(Kind::Clear, "old");
+    old.detail = Some("clear again".to_string());
+
+    let kept = retain(vec![
+        AgedReport {
+            observation: young,
+            age_days: 89,
+        },
+        AgedReport {
+            observation: due,
+            age_days: 90,
+        },
+        AgedReport {
+            observation: old,
+            age_days: 91,
+        },
+    ]);
+
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[0].detail.as_deref(), Some("lane blocked"));
+    assert_eq!(kept[1].id, "due-1");
+    assert_eq!(kept[1].detail, None);
+    assert!(kept.iter().all(|report| report.id != "old-1"));
 }

@@ -25,6 +25,32 @@ pub struct Observation {
     pub reporter_key: String,
 }
 
+/// A stored report plus the age, in days, supplied by the caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgedReport {
+    pub observation: Observation,
+    pub age_days: u32,
+}
+
+/// At 90 days the detail is dropped and the report stays. After 90 days
+/// the report is deleted. A younger report keeps its detail.
+pub fn retain(reports: Vec<AgedReport>) -> Vec<Observation> {
+    reports
+        .into_iter()
+        .filter_map(|report| {
+            if report.age_days > 90 {
+                None
+            } else if report.age_days == 90 {
+                let mut observation = report.observation;
+                observation.detail = None;
+                Some(observation)
+            } else {
+                Some(report.observation)
+            }
+        })
+        .collect()
+}
+
 /// Applies every observation to the matching edge.
 /// Reports for an unknown edge are ignored.
 pub fn apply(graph: &mut Graph, observations: &[Observation]) {
