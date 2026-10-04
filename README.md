@@ -22,3 +22,5 @@ Training pairs are stored only after an on-device opt-in. Clearing that opt-in d
 A coordinate in range is snapped to the nearest node before the router is called. A node id that exists is kept. Any other destination is rejected. The router does not snap.
 
 An initial route must finish within 2 seconds. A reroute must finish within 1 second. A slower result is not returned and is not cached.
+
+A route is returned from the graph in memory when no network is available. The routing path has no network client.
