@@ -27,6 +27,6 @@ A route is returned from the graph in memory when no network is available. The r
 
 Scorer inference must finish within 500 milliseconds. A slower inference is refused.
 
-A local tile may omit a signature. A signature, when present, must pass the caller-supplied map-source check. A fetched tile must carry a signature that passes that check, or the cache is left unchanged. The core does not name a signature scheme.
+A local tile may omit a signature. A signature, when present, is Ed25519 over the unsigned tile protobuf and must verify with the 32-byte map-source public key. A fetched tile that fails that check leaves the cache unchanged.
 
 The newest tile whose graph contains both node ids is the one used for those nodes.
