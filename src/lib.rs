@@ -13,3 +13,4 @@ pub mod reports;
 pub mod router;
 pub mod scorer;
 pub mod store;
+pub mod training;
