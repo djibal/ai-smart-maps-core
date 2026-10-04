@@ -3,10 +3,17 @@
 //! The deterministic cost remains the choice.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::graph::Graph;
 use crate::log::{DiagnosticLog, ErrorCode};
+
+pub const INFERENCE_LIMIT: Duration = Duration::from_millis(500);
+
+/// The hard limit is inclusive. A longer duration is the failure line.
+pub fn within_inference_limit(elapsed: Duration) -> bool {
+    elapsed <= INFERENCE_LIMIT
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Features {
@@ -98,6 +105,7 @@ impl Host {
 
     /// Runs the accepted artifact on the four features. A mismatched claim
     /// runs the previous version's stored bytes, never the presented bytes.
+    /// Inference past [`INFERENCE_LIMIT`] returns [`ScoreError::TooSlow`].
     pub fn score(
         &mut self,
         claimed_id: &str,
@@ -105,8 +113,25 @@ impl Host {
         previous_id: Option<&str>,
         features: &Features,
     ) -> Result<Prediction, ScoreError> {
+        self.score_within(
+            claimed_id,
+            presented,
+            previous_id,
+            features,
+            INFERENCE_LIMIT,
+        )
+    }
+
+    pub fn score_within(
+        &mut self,
+        claimed_id: &str,
+        presented: &[u8],
+        previous_id: Option<&str>,
+        features: &Features,
+        limit: Duration,
+    ) -> Result<Prediction, ScoreError> {
         let started = Instant::now();
-        let result = self.score_inner(claimed_id, presented, previous_id, features);
+        let result = self.score_inner(claimed_id, presented, previous_id, features, limit);
         let code = match &result {
             Ok(_) => None,
             Err(ScoreError::Refused) => Some(ErrorCode::Refused),
@@ -123,6 +148,7 @@ impl Host {
         presented: &[u8],
         previous_id: Option<&str>,
         features: &Features,
+        limit: Duration,
     ) -> Result<Prediction, ScoreError> {
         let version_id = self
             .accepted_version(claimed_id, presented, previous_id)
@@ -133,7 +159,7 @@ impl Host {
             .ok_or(ScoreError::Refused)?;
         let started = Instant::now();
         let value = infer(bytes, features)?;
-        if started.elapsed() > std::time::Duration::from_millis(500) {
+        if started.elapsed() > limit {
             return Err(ScoreError::TooSlow);
         }
         Ok(Prediction { version_id, value })

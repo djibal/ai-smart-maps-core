@@ -1,5 +1,9 @@
+use std::time::Duration;
+
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
-use ai_smart_maps_core::scorer::{deterministic_choice, features, Host};
+use ai_smart_maps_core::scorer::{
+    deterministic_choice, features, within_inference_limit, Host, ScoreError, INFERENCE_LIMIT,
+};
 
 fn graph() -> Graph {
     Graph {
@@ -94,4 +98,26 @@ fn the_accepted_onnx_artifact_scores_the_four_features() {
     assert_eq!(rolled.value, 0.0);
 
     assert!(host.score("scorer-1", b"tampered", None, &found).is_err());
+}
+
+#[test]
+fn the_inference_hard_limit_is_500_milliseconds() {
+    assert_eq!(INFERENCE_LIMIT, Duration::from_millis(500));
+    assert!(within_inference_limit(Duration::from_millis(500)));
+    assert!(!within_inference_limit(
+        Duration::from_millis(500) + Duration::from_nanos(1)
+    ));
+}
+
+#[test]
+fn inference_past_the_limit_is_refused() {
+    let sum = include_bytes!("../fixtures/sum_scorer.onnx");
+    let found = features(&graph(), &["e1".to_string(), "e2".to_string()]).unwrap();
+    let mut host = Host::new();
+    host.install("scorer-1", sum);
+    let error = host
+        .score_within("scorer-1", sum, None, &found, Duration::ZERO)
+        .unwrap_err();
+    assert_eq!(error, ScoreError::TooSlow);
+    assert!(host.diagnostics().render().contains("error=too_slow"));
 }

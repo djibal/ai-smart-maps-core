@@ -24,3 +24,5 @@ A coordinate in range is snapped to the nearest node before the router is called
 An initial route must finish within 2 seconds. A reroute must finish within 1 second. A slower result is not returned and is not cached.
 
 A route is returned from the graph in memory when no network is available. The routing path has no network client and no language model.
+
+Scorer inference must finish within 500 milliseconds. A slower inference is refused.
