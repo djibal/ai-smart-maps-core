@@ -20,3 +20,5 @@ A report keeps its detail before 90 days. At 90 days the detail is dropped. Afte
 Training pairs are stored only after an on-device opt-in. Clearing that opt-in deletes the pairs and the model version id.
 
 A coordinate in range is snapped to the nearest node before the router is called. A node id that exists is kept. Any other destination is rejected. The router does not snap.
+
+An initial route must finish within 2 seconds. A reroute must finish within 1 second. A slower result is not returned and is not cached.

@@ -7,11 +7,19 @@
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::confidence::{Confidence, Environment, RouteNovelty};
 use crate::graph::{Constraint, Edge, Graph};
 use crate::log::{DiagnosticLog, ErrorCode};
+
+pub const INITIAL_ROUTE_LIMIT: Duration = Duration::from_secs(2);
+pub const REROUTE_LIMIT: Duration = Duration::from_secs(1);
+
+/// The hard limit is inclusive. A longer duration is the failure line.
+pub fn within_hard_limit(limit: Duration, elapsed: Duration) -> bool {
+    elapsed <= limit
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Route {
@@ -51,9 +59,24 @@ impl Router {
 
     /// Returns the stored route when the origin, destination, and tile id
     /// match. Otherwise computes one. An unreachable destination returns
-    /// `None` and is not cached. Either outcome is written to the diagnostic
-    /// log as edge ids, a duration, and an error code.
+    /// `None` and is not cached. A result past [`INITIAL_ROUTE_LIMIT`] is
+    /// not returned and is not cached. Either outcome is written to the
+    /// diagnostic log as edge ids, a duration, and an error code.
     pub fn route(&mut self, graph: &Graph, request: &Request<'_>) -> Option<Route> {
+        self.route_within(graph, request, INITIAL_ROUTE_LIMIT)
+    }
+
+    /// Same as [`Self::route`], with the 1 second reroute hard limit.
+    pub fn reroute(&mut self, graph: &Graph, request: &Request<'_>) -> Option<Route> {
+        self.route_within(graph, request, REROUTE_LIMIT)
+    }
+
+    pub fn route_within(
+        &mut self,
+        graph: &Graph,
+        request: &Request<'_>,
+        limit: Duration,
+    ) -> Option<Route> {
         let started = Instant::now();
         let key = (
             request.origin.to_string(),
@@ -62,17 +85,44 @@ impl Router {
         );
         if let Some(stored) = self.cache.get(&key) {
             let found = stored.clone();
-            self.log.record(&found.edge_ids, started.elapsed(), None);
-            return Some(found);
+            return self.finish(limit, started.elapsed(), Some(found), None);
         }
         let Some(found) = compute(graph, request) else {
-            self.log
-                .record(&[], started.elapsed(), Some(ErrorCode::Unreachable));
+            self.finish(limit, started.elapsed(), None, Some(ErrorCode::Unreachable));
             return None;
         };
+        let elapsed = started.elapsed();
+        if !within_hard_limit(limit, elapsed) {
+            self.log
+                .record(&found.edge_ids, elapsed, Some(ErrorCode::TooSlow));
+            return None;
+        }
         self.cache.insert(key, found.clone());
-        self.log.record(&found.edge_ids, started.elapsed(), None);
+        self.log.record(&found.edge_ids, elapsed, None);
         Some(found)
+    }
+
+    fn finish(
+        &mut self,
+        limit: Duration,
+        elapsed: Duration,
+        found: Option<Route>,
+        error_code: Option<ErrorCode>,
+    ) -> Option<Route> {
+        if !within_hard_limit(limit, elapsed) {
+            let edge_ids = found
+                .as_ref()
+                .map(|route| route.edge_ids.as_slice())
+                .unwrap_or(&[]);
+            self.log.record(edge_ids, elapsed, Some(ErrorCode::TooSlow));
+            return None;
+        }
+        if let Some(route) = found {
+            self.log.record(&route.edge_ids, elapsed, None);
+            return Some(route);
+        }
+        self.log.record(&[], elapsed, error_code);
+        None
     }
 }
 
