@@ -218,3 +218,21 @@ fn the_contracts_have_no_reporter_field_and_the_module_writes_no_log() {
     assert!(!source.contains("println!"));
     assert!(!source.contains("eprintln!"));
 }
+
+#[test]
+fn an_observation_debug_form_never_contains_the_key() {
+    let key = ReporterKey::generate();
+    let hex = key.hex();
+    let observation = Observation {
+        id: "report:ab:2026-10-05T00:00:00Z".to_string(),
+        observed_at: "2026-10-05T00:00:00Z".to_string(),
+        edge_id: "ab".to_string(),
+        kind: Kind::Hazard,
+        detail: Some("flood".to_string()),
+        reporter_key: hex.clone(),
+    };
+    let shown = format!("{observation:?}");
+    assert!(shown.contains("reporter_key: \"redacted\""));
+    assert!(!shown.contains(&hex));
+    assert_eq!(observation.reporter_key, hex, "the field is still readable");
+}

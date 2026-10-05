@@ -3,6 +3,7 @@
 //! A reporter key is a device-local identifier, not an account.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Instant;
 
 use crate::graph::{Constraint, Graph};
@@ -15,7 +16,7 @@ pub enum Kind {
     Clear,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Observation {
     pub id: String,
     pub observed_at: String,
@@ -23,6 +24,19 @@ pub struct Observation {
     pub kind: Kind,
     pub detail: Option<String>,
     pub reporter_key: String,
+}
+
+impl fmt::Debug for Observation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Observation")
+            .field("id", &self.id)
+            .field("observed_at", &self.observed_at)
+            .field("edge_id", &self.edge_id)
+            .field("kind", &self.kind)
+            .field("detail", &self.detail)
+            .field("reporter_key", &"redacted")
+            .finish()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
