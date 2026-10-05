@@ -24,6 +24,16 @@ pub struct Timing {
     pub tile: Duration,
 }
 
+/// The sealed trip a mid-trip screen continues: the original origin and
+/// destination, the tile that holds them, and the new position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Continue<'a> {
+    pub origin: &'a str,
+    pub destination: &'a str,
+    pub tile_id: &'a str,
+    pub from: &'a str,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Screen {
     pub platform: &'static str,
@@ -54,12 +64,7 @@ pub fn show(
     trip: &Trip<'_>,
     timing: Timing,
 ) -> Result<Screen, ScreenError> {
-    if timing.voice > VOICE_LIMIT {
-        return Err(ScreenError::VoiceTooSlow);
-    }
-    if timing.tile > TILE_RENDER_LIMIT {
-        return Err(ScreenError::TileTooSlow);
-    }
+    within_limits(timing)?;
     let destination = match destination {
         Place::Node(id) => Destination::NodeId(id),
         Place::Coordinate { lat, lon } => Destination::Coordinate { lat, lon },
@@ -67,14 +72,51 @@ pub fn show(
     let outcome = device
         .route(origin, destination, trip)
         .map_err(ScreenError::Device)?;
-    Ok(Screen {
+    Ok(screen(platform, outcome))
+}
+
+/// Continues a sealed trip from a new position. Same voice and tile
+/// limits as [`show`]. The destination is the node already on the sealed
+/// route, not a fresh snap.
+pub fn show_reroute(
+    platform: &'static str,
+    device: &mut Device,
+    along: Continue<'_>,
+    trip: &Trip<'_>,
+    timing: Timing,
+) -> Result<Screen, ScreenError> {
+    within_limits(timing)?;
+    let outcome = device
+        .reroute(
+            along.origin,
+            along.destination,
+            along.tile_id,
+            along.from,
+            trip,
+        )
+        .map_err(ScreenError::Device)?;
+    Ok(screen(platform, outcome))
+}
+
+fn within_limits(timing: Timing) -> Result<(), ScreenError> {
+    if timing.voice > VOICE_LIMIT {
+        return Err(ScreenError::VoiceTooSlow);
+    }
+    if timing.tile > TILE_RENDER_LIMIT {
+        return Err(ScreenError::TileTooSlow);
+    }
+    Ok(())
+}
+
+fn screen(platform: &'static str, outcome: ai_smart_maps_core::device::Outcome) -> Screen {
+    Screen {
         platform,
         tile_id: outcome.tile_id,
         warning: outcome.route.confidence.warns(),
         edge_ids: outcome.route.edge_ids,
         voice_issued: true,
         tile_drawn: true,
-    })
+    }
 }
 
 /// The sealed cache as one encrypted blob for the platform to write to

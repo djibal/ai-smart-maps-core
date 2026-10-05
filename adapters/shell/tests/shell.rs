@@ -3,13 +3,14 @@ use std::time::Duration;
 use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
 use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
+use ai_smart_maps_core::reports::Kind;
 use ai_smart_maps_core::scorer::Features;
 use ai_smart_maps_core::store::StoreError;
 use ai_smart_maps_core::tiles::Origin;
 use ai_smart_maps_core::training::TrainingPair;
 use ai_smart_maps_shell::{
-    clear_local, open, restore, save, show, Device, DeviceError, Place, ScreenError, Timing, Trip,
-    TILE_RENDER_LIMIT, VOICE_LIMIT,
+    clear_local, open, restore, save, show, show_reroute, Continue, Device, DeviceError, Place,
+    ScreenError, Timing, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
 };
 
 const SUM: &[u8] = include_bytes!("../../../fixtures/sum_scorer.onnx");
@@ -69,6 +70,20 @@ fn device_with(graph: Graph) -> Device {
         )
         .unwrap();
     device
+}
+
+fn along<'a>(
+    origin: &'a str,
+    destination: &'a str,
+    tile_id: &'a str,
+    from: &'a str,
+) -> Continue<'a> {
+    Continue {
+        origin,
+        destination,
+        tile_id,
+        from,
+    }
 }
 
 fn line() -> Device {
@@ -222,6 +237,79 @@ fn an_unreachable_node_returns_no_screen() {
         Timing::default(),
     );
     assert_eq!(result, Err(ScreenError::Device(DeviceError::Unreachable)));
+}
+
+#[test]
+fn a_reroute_screen_follows_the_sealed_trip_and_does_not_keep_a_closed_edge() {
+    let mut device = device_with(Graph {
+        nodes: vec![node("a", 0.0), node("b", 1.0), node("c", 2.0)],
+        edges: vec![edge("ab", "a", "b"), edge("bc", "b", "c")],
+    });
+    let first = show(
+        "ios",
+        &mut device,
+        "a",
+        Place::Node("c"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    assert_eq!(first.edge_ids, vec!["ab".to_string(), "bc".to_string()]);
+
+    let continued = show_reroute(
+        "ios",
+        &mut device,
+        along("a", "c", "tile-1", "b"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    assert_eq!(continued.platform, "ios");
+    assert_eq!(continued.tile_id, "tile-1");
+    assert_eq!(continued.edge_ids, vec!["bc".to_string()]);
+    assert!(continued.voice_issued && continued.tile_drawn);
+
+    device
+        .report("bc", Kind::Closure, None, &trip(Environment::Simple))
+        .unwrap();
+    let closed = show_reroute(
+        "ios",
+        &mut device,
+        along("a", "c", "tile-1", "b"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    );
+    assert_eq!(closed, Err(ScreenError::Device(DeviceError::Unreachable)));
+    assert_ne!(
+        closed.ok().map(|screen| screen.edge_ids),
+        Some(first.edge_ids),
+        "a closed remaining edge is not a stale list"
+    );
+
+    assert_eq!(
+        show_reroute(
+            "web",
+            &mut device,
+            along("a", "c", "tile-1", "b"),
+            &trip(Environment::Simple),
+            Timing {
+                voice: Duration::from_millis(201),
+                tile: Duration::ZERO,
+            },
+        ),
+        Err(ScreenError::VoiceTooSlow)
+    );
+    let mut fresh = line();
+    assert_eq!(
+        show_reroute(
+            "android",
+            &mut fresh,
+            along("a", "b", "tile-1", "a"),
+            &trip(Environment::Simple),
+            Timing::default(),
+        ),
+        Err(ScreenError::Device(DeviceError::NoRoute))
+    );
 }
 
 #[test]
