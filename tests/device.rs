@@ -3,6 +3,7 @@ use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
 use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::device::{Device, DeviceError, Trip};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
+use ai_smart_maps_core::reports::Kind;
 use ai_smart_maps_core::snap::Destination;
 use ai_smart_maps_core::tiles::{signed_bytes, Origin};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -244,6 +245,115 @@ fn clearing_local_data_removes_sealed_routes_and_the_opt_in() {
     device.clear_local_data();
     assert!(device.sealed_route("a", "c", "t").is_none());
     assert!(!device.training().opted_in());
+}
+
+#[test]
+fn a_local_report_carries_the_key_changes_the_route_and_stays_out_of_the_log() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let before = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(before.route.edge_ids, vec!["long".to_string()]);
+
+    let key = device.reporter_key().unwrap();
+    let observation = device
+        .report(
+            "long",
+            Kind::Closure,
+            Some("tree across the road"),
+            &trip(Environment::Simple),
+        )
+        .unwrap();
+    assert_eq!(observation.reporter_key, key.hex());
+    assert_eq!(observation.edge_id, "long");
+    assert_eq!(observation.observed_at, "2026-10-05T00:00:00Z");
+
+    let sealed = device.sealed_reports();
+    assert_eq!(sealed, vec![observation.clone()]);
+    assert_eq!(sealed[0].detail.as_deref(), Some("tree across the road"));
+    let record = device.export_record(&observation.id).unwrap();
+    assert!(!String::from_utf8_lossy(record).contains(&key.hex()));
+    assert!(!String::from_utf8_lossy(record).contains("tree across"));
+
+    let after = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(
+        after.route.edge_ids,
+        vec!["via".to_string(), "rest".to_string()]
+    );
+
+    let log = device.diagnostics();
+    assert!(log.contains("long"));
+    assert!(!log.contains(&key.hex()));
+    assert!(!log.contains("tree"));
+}
+
+#[test]
+fn a_report_on_an_unknown_edge_is_logged_and_not_sealed() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    assert_eq!(
+        device.report("nowhere", Kind::Hazard, None, &trip(Environment::Simple)),
+        Err(DeviceError::NoTile)
+    );
+    assert_eq!(
+        device.report("", Kind::Hazard, None, &trip(Environment::Simple)),
+        Err(DeviceError::Rejected)
+    );
+    assert!(device.sealed_reports().is_empty());
+    assert!(device.diagnostics().contains("unknown_edge"));
+    assert!(device.diagnostics().contains("nowhere"));
+}
+
+#[test]
+fn sealed_reports_follow_the_ninety_day_rule_and_leave_with_a_clear() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let young = Trip {
+        now: "2026-10-05T00:00:00Z",
+        ..trip(Environment::Simple)
+    };
+    let at_limit = Trip {
+        now: "2026-07-07T00:00:00Z",
+        ..trip(Environment::Simple)
+    };
+    let past = Trip {
+        now: "2026-01-01T00:00:00Z",
+        ..trip(Environment::Simple)
+    };
+    device
+        .report("via", Kind::Hazard, Some("young"), &young)
+        .unwrap();
+    device
+        .report("via", Kind::Hazard, Some("at limit"), &at_limit)
+        .unwrap();
+    device
+        .report("via", Kind::Hazard, Some("past"), &past)
+        .unwrap();
+    assert_eq!(device.sealed_reports().len(), 3);
+
+    device.retain_reports(|observation| match observation.observed_at.as_str() {
+        "2026-10-05T00:00:00Z" => 1,
+        "2026-07-07T00:00:00Z" => 90,
+        _ => 91,
+    });
+    let kept = device.sealed_reports();
+    assert_eq!(kept.len(), 2);
+    let details: Vec<Option<&str>> = kept.iter().map(|o| o.detail.as_deref()).collect();
+    assert!(details.contains(&Some("young")));
+    assert!(details.contains(&None));
+    assert!(!details.contains(&Some("past")));
+
+    device.clear_local_data();
+    assert!(device.sealed_reports().is_empty());
 }
 
 #[test]

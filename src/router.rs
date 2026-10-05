@@ -57,6 +57,12 @@ impl Router {
         &self.log
     }
 
+    /// Drops every cached route on the tile. A report that changes the
+    /// tile's graph calls this so the next request routes again.
+    pub fn forget_tile(&mut self, tile_id: &str) {
+        self.cache.retain(|(_, _, cached), _| cached != tile_id);
+    }
+
     /// Returns the stored route when the origin, destination, and tile id
     /// match. Otherwise computes one. An unreachable destination returns
     /// `None` and is not cached. A result past [`INITIAL_ROUTE_LIMIT`] is

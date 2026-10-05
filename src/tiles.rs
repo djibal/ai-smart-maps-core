@@ -109,6 +109,14 @@ impl TileCache {
         self.tiles.retain(|tile| ids.contains(&tile.id));
     }
 
+    /// Every cached tile whose graph has the edge, for a report to change.
+    pub fn with_edge_mut(&mut self, edge_id: &str) -> Vec<&mut TileRecord> {
+        self.tiles
+            .iter_mut()
+            .filter(|tile| tile.graph.edges.iter().any(|edge| edge.id == edge_id))
+            .collect()
+    }
+
     /// The newest tile whose graph contains both node ids.
     /// Equal `observed_at` keeps the lexicographically smaller tile id.
     pub fn newest_covering(&self, origin: &str, destination: &str) -> Option<&TileRecord> {

@@ -73,6 +73,22 @@ impl LocalStore {
         self.records.is_empty()
     }
 
+    /// Record names starting with `prefix`, sorted.
+    pub fn names_with_prefix(&self, prefix: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .records
+            .keys()
+            .filter(|name| name.starts_with(prefix))
+            .cloned()
+            .collect();
+        names.sort();
+        names
+    }
+
+    pub fn remove(&mut self, name: &str) {
+        self.records.remove(name);
+    }
+
     pub fn export(&self, name: &str) -> Option<&[u8]> {
         self.records.get(name).map(Vec::as_slice)
     }

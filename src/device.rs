@@ -7,7 +7,9 @@
 use crate::budget::Budget;
 use crate::confidence::{Environment, RouteNovelty};
 use crate::contracts::{encode_route, encode_tile, ModelVersionRecord, TileRecord};
+use crate::log::{DiagnosticLog, ErrorCode};
 use crate::reporter::{self, ReporterKey};
+use crate::reports::{self, AgedReport, Kind, Observation};
 use crate::router::{Request, Route, Router};
 use crate::scorer::{features, Host, Prediction};
 use crate::snap::{self, Destination};
@@ -58,6 +60,7 @@ pub struct Device {
     training: TrainingRecord,
     map_source_key: Vec<u8>,
     active: Option<ActiveScorer>,
+    reports: DiagnosticLog,
 }
 
 impl Device {
@@ -73,6 +76,7 @@ impl Device {
             training: TrainingRecord::new(),
             map_source_key: map_source_key.to_vec(),
             active: None,
+            reports: DiagnosticLog::new(),
         })
     }
 
@@ -199,6 +203,86 @@ impl Device {
         crate::contracts::decode_route(&bytes).ok()
     }
 
+    /// A local report from this device. The observation carries the
+    /// reporter key, is applied to every cached tile that has the edge,
+    /// drops the cached routes on those tiles, and is sealed under
+    /// `report:{edge_id}:{now}`. An edge no cached tile
+    /// knows is logged as `unknown_edge` and refused before sealing. The
+    /// log gets the edge id and the duration, never the key or the detail.
+    pub fn report(
+        &mut self,
+        edge_id: &str,
+        kind: Kind,
+        detail: Option<&str>,
+        trip: &Trip<'_>,
+    ) -> Result<Observation, DeviceError> {
+        if edge_id.is_empty() {
+            return Err(DeviceError::Rejected);
+        }
+        let key = self.reporter_key().map_err(|_| DeviceError::Rejected)?;
+        let observation = Observation {
+            id: report_key(edge_id, trip.now),
+            observed_at: trip.now.to_string(),
+            edge_id: edge_id.to_string(),
+            kind,
+            detail: detail.map(str::to_string),
+            reporter_key: key.hex(),
+        };
+        let tiles = self.tiles.with_edge_mut(edge_id);
+        if tiles.is_empty() {
+            self.reports.record(
+                std::slice::from_ref(&observation.edge_id),
+                std::time::Duration::ZERO,
+                Some(ErrorCode::UnknownEdge),
+            );
+            return Err(DeviceError::NoTile);
+        }
+        for tile in tiles {
+            reports::apply_logged(
+                &mut tile.graph,
+                std::slice::from_ref(&observation),
+                &mut self.reports,
+            );
+            self.router.forget_tile(&tile.id);
+        }
+        self.store
+            .put(&observation.id, &reports::encode_observation(&observation))
+            .map_err(|_| DeviceError::Rejected)?;
+        Ok(observation)
+    }
+
+    /// Every sealed report, oldest record name first.
+    pub fn sealed_reports(&self) -> Vec<Observation> {
+        self.store
+            .names_with_prefix("report:")
+            .iter()
+            .filter_map(|name| self.store.get(name).ok())
+            .filter_map(|bytes| reports::decode_observation(&bytes).ok())
+            .collect()
+    }
+
+    /// Applies the 90-day rule to the sealed reports. `age_days` gives each
+    /// report's age. At 90 the detail is dropped and the report stays.
+    /// Past 90 the sealed record is deleted.
+    pub fn retain_reports(&mut self, age_days: impl Fn(&Observation) -> u32) {
+        let aged: Vec<AgedReport> = self
+            .sealed_reports()
+            .into_iter()
+            .map(|observation| AgedReport {
+                age_days: age_days(&observation),
+                observation,
+            })
+            .collect();
+        for name in self.store.names_with_prefix("report:") {
+            self.store.remove(&name);
+        }
+        for observation in reports::retain(aged) {
+            let _ = self
+                .store
+                .put(&observation.id, &reports::encode_observation(&observation));
+        }
+    }
+
     pub fn training(&mut self) -> &mut TrainingRecord {
         &mut self.training
     }
@@ -251,16 +335,18 @@ impl Device {
         self.budget.used()
     }
 
-    /// Router lines first, then scorer lines. Edge ids, durations, and
-    /// error codes only.
+    /// Router lines, then scorer lines, then report lines. Edge ids,
+    /// durations, and error codes only.
     pub fn diagnostics(&self) -> String {
-        let router = self.router.diagnostics().render();
-        let scorer = self.scorer.diagnostics().render();
-        match (router.is_empty(), scorer.is_empty()) {
-            (true, _) => scorer,
-            (_, true) => router,
-            _ => format!("{router}\n{scorer}"),
-        }
+        [
+            self.router.diagnostics().render(),
+            self.scorer.diagnostics().render(),
+            self.reports.render(),
+        ]
+        .into_iter()
+        .filter(|lines| !lines.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
     }
 
     fn resolve(
@@ -299,4 +385,8 @@ impl Device {
 
 fn route_key(origin: &str, destination: &str, tile_id: &str) -> String {
     format!("route:{origin}:{destination}:{tile_id}")
+}
+
+fn report_key(edge_id: &str, now: &str) -> String {
+    format!("report:{edge_id}:{now}")
 }

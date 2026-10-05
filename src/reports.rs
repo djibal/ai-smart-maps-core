@@ -25,6 +25,71 @@ pub struct Observation {
     pub reporter_key: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Malformed;
+
+/// Length-prefixed bytes for the sealed cache. This is a local record, not
+/// a contract: the reporter key travels only inside the sealed store.
+pub fn encode_observation(observation: &Observation) -> Vec<u8> {
+    let mut out = Vec::new();
+    for field in [
+        observation.id.as_str(),
+        observation.observed_at.as_str(),
+        observation.edge_id.as_str(),
+        observation.reporter_key.as_str(),
+        observation.detail.as_deref().unwrap_or(""),
+    ] {
+        out.extend((field.len() as u32).to_be_bytes());
+        out.extend(field.as_bytes());
+    }
+    out.push(match observation.kind {
+        Kind::Closure => 0,
+        Kind::Hazard => 1,
+        Kind::Clear => 2,
+    });
+    out.push(u8::from(observation.detail.is_some()));
+    out
+}
+
+pub fn decode_observation(bytes: &[u8]) -> Result<Observation, Malformed> {
+    let mut rest = bytes;
+    let mut fields = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let (len, after) = rest.split_at_checked(4).ok_or(Malformed)?;
+        let len = u32::from_be_bytes(len.try_into().map_err(|_| Malformed)?) as usize;
+        let (field, after) = after.split_at_checked(len).ok_or(Malformed)?;
+        fields.push(String::from_utf8(field.to_vec()).map_err(|_| Malformed)?);
+        rest = after;
+    }
+    let [kind, has_detail] = rest else {
+        return Err(Malformed);
+    };
+    let kind = match kind {
+        0 => Kind::Closure,
+        1 => Kind::Hazard,
+        2 => Kind::Clear,
+        _ => return Err(Malformed),
+    };
+    let mut fields = fields.into_iter();
+    let id = fields.next().ok_or(Malformed)?;
+    let observed_at = fields.next().ok_or(Malformed)?;
+    let edge_id = fields.next().ok_or(Malformed)?;
+    let reporter_key = fields.next().ok_or(Malformed)?;
+    let detail = fields.next().ok_or(Malformed)?;
+    Ok(Observation {
+        id,
+        observed_at,
+        edge_id,
+        kind,
+        detail: match has_detail {
+            0 => None,
+            1 => Some(detail),
+            _ => return Err(Malformed),
+        },
+        reporter_key,
+    })
+}
+
 /// A stored report plus the age, in days, supplied by the caller.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgedReport {

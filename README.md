@@ -37,4 +37,6 @@ The newest tile whose graph contains both node ids is the one used for those nod
 
 `reporter` holds the reporter key: 16 random bytes from the operating system, written as 32 hex characters when a report carries it. `Device::reporter_key` creates and seals it on first use and reads it back after that. A sealed record that does not open under the current cache key is refused, not replaced. Clear and the 90-day rotation delete it with the cache. It is not in the log, the contracts, or the `Debug` output.
 
+`Device::report` makes a local report: the observation carries the reporter key, is applied to every cached tile that has the edge, drops the cached routes on those tiles so the next request routes again, and is sealed under `report:{edge_id}:{now}`. An edge no tile knows is logged as `unknown_edge` and refused before sealing. `retain_reports` applies the 90-day rule to the sealed records and `clear_local_data` deletes them.
+
 The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source.
