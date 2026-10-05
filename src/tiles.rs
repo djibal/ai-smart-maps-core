@@ -103,6 +103,12 @@ impl TileCache {
         Ok(())
     }
 
+    /// Drops every tile whose id is not in `ids`. The budget decides which
+    /// ids stay; this cache follows it.
+    pub fn retain_ids(&mut self, ids: &[String]) {
+        self.tiles.retain(|tile| ids.contains(&tile.id));
+    }
+
     /// The newest tile whose graph contains both node ids.
     /// Equal `observed_at` keeps the lexicographically smaller tile id.
     pub fn newest_covering(&self, origin: &str, destination: &str) -> Option<&TileRecord> {

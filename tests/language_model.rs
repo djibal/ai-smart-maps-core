@@ -6,6 +6,7 @@ fn the_routing_path_has_no_language_model() {
         include_str!("../src/snap.rs"),
         include_str!("../src/graph.rs"),
         include_str!("../src/confidence.rs"),
+        include_str!("../src/device.rs"),
     ];
     let forbidden = ["openai", "anthropic", "language model", "chatgpt", "gpt-"];
     for source in sources {

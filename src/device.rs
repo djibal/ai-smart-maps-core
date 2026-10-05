@@ -1,0 +1,267 @@
+//! One device, end to end. A tile is admitted, the newest covering tile
+//! is chosen, the destination is snapped, the router runs, the scorer
+//! ranks, confidence is attached, the route is sealed, and the log is
+//! written. The deterministic cost decides the route. The scorer does not.
+//! Nothing here opens a network or stores a person.
+
+use crate::budget::Budget;
+use crate::confidence::{Environment, RouteNovelty};
+use crate::contracts::{encode_route, encode_tile, ModelVersionRecord, TileRecord};
+use crate::router::{Request, Route, Router};
+use crate::scorer::{features, Host, Prediction};
+use crate::snap::{self, Destination};
+use crate::store::{LocalStore, StoreError};
+use crate::tiles::{Origin, TileCache};
+use crate::training::TrainingRecord;
+
+#[derive(Clone, Debug)]
+pub struct Trip<'a> {
+    pub now: &'a str,
+    pub map_age_days: f64,
+    pub report_count: u32,
+    pub route_novelty: RouteNovelty,
+    pub environment: Environment,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Outcome {
+    pub tile_id: String,
+    pub route: Route,
+    pub prediction: Option<Prediction>,
+    pub rolled_back: bool,
+    pub sealed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeviceError {
+    TileRejected,
+    NoScorer,
+    NoTile,
+    Rejected,
+    Unreachable,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveScorer {
+    id: String,
+    previous_id: Option<String>,
+    presented: Vec<u8>,
+}
+
+pub struct Device {
+    tiles: TileCache,
+    budget: Budget,
+    router: Router,
+    scorer: Host,
+    store: LocalStore,
+    training: TrainingRecord,
+    map_source_key: Vec<u8>,
+    active: Option<ActiveScorer>,
+}
+
+impl Device {
+    /// `cache_key` is the 32-byte key from the platform secure store.
+    /// `map_source_key` is the 32-byte Ed25519 public key of the map source.
+    pub fn open(cache_key: &[u8], map_source_key: &[u8]) -> Result<Self, StoreError> {
+        Ok(Self {
+            tiles: TileCache::new(),
+            budget: Budget::new(),
+            router: Router::new(),
+            scorer: Host::new(),
+            store: LocalStore::open(cache_key)?,
+            training: TrainingRecord::new(),
+            map_source_key: map_source_key.to_vec(),
+            active: None,
+        })
+    }
+
+    pub fn with_budget(mut self, budget: Budget) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    /// Admits the tile, counts it toward the budget, and drops whatever the
+    /// budget evicted. A rejected tile changes nothing.
+    pub fn load_tile(&mut self, tile: TileRecord, origin: Origin) -> Result<(), DeviceError> {
+        let bytes = encode_tile(&tile).map_err(|_| DeviceError::TileRejected)?;
+        let id = tile.id.clone();
+        let observed_at = tile.observed_at.clone();
+        self.tiles
+            .insert(tile, origin, &self.map_source_key)
+            .map_err(|_| DeviceError::TileRejected)?;
+        self.budget
+            .insert_tile(&id, &observed_at, bytes.len() as u64);
+        self.tiles.retain_ids(&self.budget.tile_ids());
+        Ok(())
+    }
+
+    /// Installs the artifact named by the model version and makes it active.
+    pub fn install_scorer(&mut self, record: &ModelVersionRecord, bytes: &[u8]) {
+        self.scorer.install(&record.id, bytes);
+        self.budget.insert_model(
+            &record.id,
+            &record.created_at,
+            bytes.len() as u64,
+            record.previous_id.as_deref(),
+            true,
+        );
+        self.active = Some(ActiveScorer {
+            id: record.id.clone(),
+            previous_id: record.previous_id.clone(),
+            presented: bytes.to_vec(),
+        });
+    }
+
+    /// The bytes the platform presents at startup. A later mismatch with
+    /// the installed artifact rolls back to `previous_id`.
+    pub fn present_artifact(&mut self, bytes: &[u8]) -> Result<(), DeviceError> {
+        let active = self.active.as_mut().ok_or(DeviceError::NoScorer)?;
+        active.presented = bytes.to_vec();
+        Ok(())
+    }
+
+    pub fn route(
+        &mut self,
+        origin: &str,
+        destination: Destination<'_>,
+        trip: &Trip<'_>,
+    ) -> Result<Outcome, DeviceError> {
+        let active = self.active.clone().ok_or(DeviceError::NoScorer)?;
+        let accepted = self.scorer.accepted_version(
+            &active.id,
+            &active.presented,
+            active.previous_id.as_deref(),
+        );
+        let (model_version_id, rolled_back) = match accepted {
+            Some(id) => {
+                let rolled = id != active.id;
+                (id, rolled)
+            }
+            None => (active.id.clone(), true),
+        };
+
+        let (tile_id, graph, destination_id) = {
+            let (tile, destination_id) = self.resolve(origin, destination)?;
+            (tile.id.clone(), tile.graph.clone(), destination_id)
+        };
+
+        let request = Request {
+            origin,
+            destination: &destination_id,
+            tile_id: &tile_id,
+            now: trip.now,
+            model_version_id: &model_version_id,
+            map_age_days: trip.map_age_days,
+            report_count: trip.report_count,
+            rolled_back,
+            route_novelty: trip.route_novelty,
+            environment: trip.environment,
+        };
+        let route = self
+            .router
+            .route(&graph, &request)
+            .ok_or(DeviceError::Unreachable)?;
+
+        let prediction = features(&graph, &route.edge_ids).ok().and_then(|found| {
+            self.scorer
+                .score(
+                    &active.id,
+                    &active.presented,
+                    active.previous_id.as_deref(),
+                    &found,
+                )
+                .ok()
+        });
+
+        let sealed = match encode_route(&route) {
+            Ok(bytes) => self
+                .store
+                .put(&route_key(origin, &destination_id, &tile_id), &bytes)
+                .is_ok(),
+            Err(_) => false,
+        };
+
+        Ok(Outcome {
+            tile_id,
+            route,
+            prediction,
+            rolled_back,
+            sealed,
+        })
+    }
+
+    pub fn sealed_route(&self, origin: &str, destination: &str, tile_id: &str) -> Option<Route> {
+        let bytes = self
+            .store
+            .get(&route_key(origin, destination, tile_id))
+            .ok()?;
+        crate::contracts::decode_route(&bytes).ok()
+    }
+
+    pub fn training(&mut self) -> &mut TrainingRecord {
+        &mut self.training
+    }
+
+    /// Clears the sealed cache and the training opt-in. The key stays.
+    pub fn clear_local_data(&mut self) {
+        self.store.clear();
+        self.training.clear_opt_in();
+    }
+
+    pub fn tile_ids(&self) -> Vec<String> {
+        self.budget.tile_ids()
+    }
+
+    pub fn budget_used(&self) -> u64 {
+        self.budget.used()
+    }
+
+    /// Router lines first, then scorer lines. Edge ids, durations, and
+    /// error codes only.
+    pub fn diagnostics(&self) -> String {
+        let router = self.router.diagnostics().render();
+        let scorer = self.scorer.diagnostics().render();
+        match (router.is_empty(), scorer.is_empty()) {
+            (true, _) => scorer,
+            (_, true) => router,
+            _ => format!("{router}\n{scorer}"),
+        }
+    }
+
+    fn resolve(
+        &self,
+        origin: &str,
+        destination: Destination<'_>,
+    ) -> Result<(&TileRecord, String), DeviceError> {
+        match destination {
+            Destination::NodeId(id) => {
+                if id.is_empty() {
+                    return Err(DeviceError::Rejected);
+                }
+                let tile = self
+                    .tiles
+                    .newest_covering(origin, id)
+                    .ok_or(DeviceError::NoTile)?;
+                Ok((tile, id.to_string()))
+            }
+            Destination::Coordinate { .. } => {
+                let origin_tile = self
+                    .tiles
+                    .newest_covering(origin, origin)
+                    .ok_or(DeviceError::NoTile)?;
+                let snapped = snap::resolve(&origin_tile.graph, destination)
+                    .map_err(|_| DeviceError::Rejected)?
+                    .to_string();
+                let tile = self
+                    .tiles
+                    .newest_covering(origin, &snapped)
+                    .ok_or(DeviceError::NoTile)?;
+                Ok((tile, snapped))
+            }
+        }
+    }
+}
+
+fn route_key(origin: &str, destination: &str, tile_id: &str) -> String {
+    format!("route:{origin}:{destination}:{tile_id}")
+}
