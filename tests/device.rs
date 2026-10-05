@@ -155,6 +155,28 @@ fn a_tampered_artifact_rolls_back_and_lowers_confidence() {
 }
 
 #[test]
+fn presenting_a_tampered_artifact_drops_the_cached_route_on_the_same_origin() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let first = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(first.route.model_version_id, "scorer-1");
+    assert!(!first.rolled_back);
+
+    device.present_artifact(b"tampered").unwrap();
+    let after = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert!(after.rolled_back);
+    assert_eq!(after.route.model_version_id, "scorer-0");
+    assert_eq!(after.prediction.unwrap().version_id, "scorer-0");
+    assert_eq!(after.route.edge_ids, first.route.edge_ids);
+}
+
+#[test]
 fn a_fetched_tile_without_a_valid_signature_never_enters_the_flow() {
     let mut device = device();
     let unsigned = local_tile("remote", "2026-09-01T00:00:00Z");

@@ -45,7 +45,7 @@ While `training().opt_in` is set, every routed request records one training pair
 
 `route` and `reroute` take `report_count` as the greater of the caller's number and the sealed reports on the device, so one sealed hazard is enough to raise the count on the route.
 
-`install_scorer` drops every cached route so the next `route` on the same device runs on the new bytes, not a route that still names the previous model version.
+`install_scorer` and `present_artifact` drop every cached route so the next `route` on the same device runs on the new bytes, not a route that still names the previous model version. A tampered present on the same origin rolls back to `previous_id`.
 
 `Device::reroute` continues a sealed route from a new position on the same tile, under the 1-second reroute limit. A tile whose `observed_at` is more than 90 days before `trip.now` lowers confidence. With no sealed route it returns `NoRoute`. Unreachable and rollback rules are the same as the initial path.
 

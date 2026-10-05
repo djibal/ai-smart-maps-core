@@ -220,6 +220,7 @@ impl Device {
     pub fn present_artifact(&mut self, bytes: &[u8]) -> Result<(), DeviceError> {
         let active = self.active.as_mut().ok_or(DeviceError::NoScorer)?;
         active.presented = bytes.to_vec();
+        self.router.forget_all();
         Ok(())
     }
 
