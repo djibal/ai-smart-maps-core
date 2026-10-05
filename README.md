@@ -31,6 +31,8 @@ A local tile may omit a signature. A signature, when present, is Ed25519 over th
 
 The newest tile whose graph contains both node ids is the one used for those nodes.
 
+`fixtures/a1v5_device_32x2.onnx` is the A1-v5 device scorer, 32 hidden units and 2 layers, trained on the linear variant with seed 0 and exported from the experiment repository. It runs on this host inside the 500 millisecond limit and ranks the cheaper route higher. The record beside it holds the reference scores. This is the accepted model shape running on device. It is not a new measurement of the 3-percentage-point bar.
+
 `Device` runs the whole flow on one device: admit a tile, choose the newest tile that covers both nodes, snap, route, score, attach confidence, seal the route, and write the log. A tampered artifact rolls back to `previous_id` and lowers confidence. The deterministic cost decides the route.
 
 The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source.

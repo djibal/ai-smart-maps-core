@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
 use ai_smart_maps_core::scorer::{
-    deterministic_choice, features, within_inference_limit, Host, ScoreError, INFERENCE_LIMIT,
+    deterministic_choice, features, within_inference_limit, Features, Host, ScoreError,
+    INFERENCE_LIMIT,
 };
 
 fn graph() -> Graph {
@@ -98,6 +99,44 @@ fn the_accepted_onnx_artifact_scores_the_four_features() {
     assert_eq!(rolled.value, 0.0);
 
     assert!(host.score("scorer-1", b"tampered", None, &found).is_err());
+}
+
+/// The A1-v5 device scorer: 32 hidden units, 2 layers, trained on the
+/// linear variant with torch seed 0 from the experiment repository and
+/// exported to ONNX. `fixtures/a1v5_device_32x2.json` records the
+/// reference scores. A higher score is the preferred route.
+#[test]
+fn the_a1_v5_device_scorer_runs_on_device_and_ranks_the_cheaper_route_higher() {
+    let artifact = include_bytes!("../fixtures/a1v5_device_32x2.onnx");
+    assert!(artifact.len() < 8 * 1024, "{} bytes", artifact.len());
+    let cheap = Features {
+        edge_count: 2,
+        weight_sum: 5.0,
+        hazard_sum: 0.2,
+        hazard_missing: 0,
+    };
+    let dear = Features {
+        edge_count: 4,
+        weight_sum: 30.0,
+        hazard_sum: 2.5,
+        hazard_missing: 1,
+    };
+    let mut host = Host::new();
+    host.install("a1v5-32x2", artifact);
+
+    let started = std::time::Instant::now();
+    let cheap_score = host.score("a1v5-32x2", artifact, None, &cheap).unwrap();
+    let dear_score = host.score("a1v5-32x2", artifact, None, &dear).unwrap();
+    let elapsed = started.elapsed();
+
+    assert!(within_inference_limit(elapsed), "{elapsed:?}");
+    assert!(
+        (cheap_score.value - -0.355_85).abs() < 1e-4,
+        "{cheap_score:?}"
+    );
+    assert!((dear_score.value - -1.540_3).abs() < 1e-4, "{dear_score:?}");
+    assert!(cheap_score.value > dear_score.value);
+    assert!(!host.diagnostics().render().contains("error="));
 }
 
 #[test]
