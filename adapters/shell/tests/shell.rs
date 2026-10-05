@@ -9,7 +9,7 @@ use ai_smart_maps_core::tiles::Origin;
 use ai_smart_maps_core::training::TrainingPair;
 use ai_smart_maps_shell::{
     clear_local, open, report, restore, save, show, show_reroute, Continue, Device, DeviceError,
-    Kind, Place, ScreenError, Timing, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
+    Filed, Kind, Place, ScreenError, Timing, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
 };
 
 const SUM: &[u8] = include_bytes!("../../../fixtures/sum_scorer.onnx");
@@ -255,7 +255,7 @@ fn a_report_changes_the_next_screen_and_an_unknown_edge_is_an_error() {
     .unwrap();
     assert_eq!(first.edge_ids, vec!["ab".to_string(), "bc".to_string()]);
 
-    report(
+    let filed = report(
         &mut device,
         "bc",
         Kind::Closure,
@@ -263,6 +263,19 @@ fn a_report_changes_the_next_screen_and_an_unknown_edge_is_an_error() {
         &trip(Environment::Simple),
     )
     .unwrap();
+    assert_eq!(
+        filed,
+        Filed {
+            edge_id: "bc".to_string(),
+            kind: Kind::Closure,
+        }
+    );
+    let hex = device.reporter_key().unwrap().hex();
+    let shown = format!("{filed:?}");
+    assert!(!shown.contains(&hex));
+    assert!(!shown.contains("blocked"));
+    assert!(!shown.contains("detail"));
+    assert!(!shown.contains("reporter"));
     let after = show(
         "ios",
         &mut device,

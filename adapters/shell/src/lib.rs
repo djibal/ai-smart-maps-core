@@ -45,6 +45,14 @@ pub struct Screen {
     pub tile_drawn: bool,
 }
 
+/// What the platform can speak after a report is sealed: the edge and
+/// the kind. No reporter key, no detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Filed {
+    pub edge_id: String,
+    pub kind: Kind,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ScreenError {
     Device(DeviceError),
@@ -137,17 +145,22 @@ pub fn restore(cache_key: &[u8], map_source_key: &[u8], blob: &[u8]) -> Result<D
 
 /// A local report from this device. An unknown edge is `ScreenError`.
 /// The next [`show`] of a closed remaining edge is not the previous list.
+/// The returned [`Filed`] names the edge and the kind so the platform
+/// can confirm the seal without reading the core observation.
 pub fn report(
     device: &mut Device,
     edge_id: &str,
     kind: Kind,
     detail: Option<&str>,
     trip: &Trip<'_>,
-) -> Result<(), ScreenError> {
-    device
+) -> Result<Filed, ScreenError> {
+    let observation = device
         .report(edge_id, kind, detail, trip)
-        .map(|_| ())
-        .map_err(ScreenError::Device)
+        .map_err(ScreenError::Device)?;
+    Ok(Filed {
+        edge_id: observation.edge_id,
+        kind: observation.kind,
+    })
 }
 
 /// The clear-data action. Sealed routes and the training opt-in go.
