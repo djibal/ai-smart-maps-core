@@ -55,6 +55,7 @@ fn a_route_is_returned_with_no_network_client() {
         include_str!("../src/confidence.rs"),
         include_str!("../src/device.rs"),
         include_str!("../src/tiles.rs"),
+        include_str!("../src/reporter.rs"),
     ];
     for source in sources {
         assert!(!source.contains("reqwest"));

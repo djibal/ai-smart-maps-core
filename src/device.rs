@@ -7,6 +7,7 @@
 use crate::budget::Budget;
 use crate::confidence::{Environment, RouteNovelty};
 use crate::contracts::{encode_route, encode_tile, ModelVersionRecord, TileRecord};
+use crate::reporter::{self, ReporterKey};
 use crate::router::{Request, Route, Router};
 use crate::scorer::{features, Host, Prediction};
 use crate::snap::{self, Destination};
@@ -202,10 +203,44 @@ impl Device {
         &mut self.training
     }
 
-    /// Clears the sealed cache and the training opt-in. The key stays.
+    /// Clears the sealed cache, the reporter key inside it, and the
+    /// training opt-in. The cache key stays.
     pub fn clear_local_data(&mut self) {
         self.store.clear();
         self.training.clear_opt_in();
+    }
+
+    /// Rotates the cache key once `age_days` is at least 90. The sealed
+    /// cache and the reporter key go with it. Earlier is refused and
+    /// nothing changes.
+    pub fn rotate_cache(&mut self, new_key: &[u8], age_days: u32) -> Result<(), StoreError> {
+        self.store.rotate(new_key, age_days)?;
+        self.training.clear_opt_in();
+        Ok(())
+    }
+
+    /// The reporter key from the sealed cache, created and sealed when the
+    /// record is absent. A record that is present but does not open under
+    /// this cache key is refused, not replaced. It is the only identifier
+    /// a local report carries.
+    pub fn reporter_key(&mut self) -> Result<ReporterKey, StoreError> {
+        if self.store.export(reporter::RECORD).is_some() {
+            let bytes = self.store.get(reporter::RECORD)?;
+            return ReporterKey::from_bytes(&bytes).map_err(|_| StoreError::Rejected);
+        }
+        let key = ReporterKey::generate();
+        self.store.put(reporter::RECORD, key.as_bytes())?;
+        Ok(key)
+    }
+
+    /// A sealed record for the platform to persist. Still encrypted.
+    pub fn export_record(&self, name: &str) -> Option<&[u8]> {
+        self.store.export(name)
+    }
+
+    /// A sealed record the platform persisted earlier.
+    pub fn import_record(&mut self, name: &str, sealed: Vec<u8>) {
+        self.store.import(name, sealed);
     }
 
     pub fn tile_ids(&self) -> Vec<String> {

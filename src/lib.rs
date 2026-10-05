@@ -10,6 +10,7 @@ pub mod contracts;
 pub mod device;
 pub mod graph;
 pub mod log;
+pub mod reporter;
 pub mod reports;
 pub mod router;
 pub mod scorer;

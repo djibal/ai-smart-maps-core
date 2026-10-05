@@ -35,4 +35,6 @@ The newest tile whose graph contains both node ids is the one used for those nod
 
 `Device` runs the whole flow on one device: admit a tile, choose the newest tile that covers both nodes, snap, route, score, attach confidence, seal the route, and write the log. A tampered artifact rolls back to `previous_id` and lowers confidence. The deterministic cost decides the route.
 
+`reporter` holds the reporter key: 16 random bytes from the operating system, written as 32 hex characters when a report carries it. `Device::reporter_key` creates and seals it on first use and reads it back after that. A sealed record that does not open under the current cache key is refused, not replaced. Clear and the 90-day rotation delete it with the cache. It is not in the log, the contracts, or the `Debug` output.
+
 The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source.
