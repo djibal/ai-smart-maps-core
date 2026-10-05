@@ -79,7 +79,7 @@ pub fn show(
 
 /// The sealed cache as one encrypted blob for the platform to write to
 /// its app storage. Still encrypted under the secure-store key.
-pub fn save(device: &Device) -> Result<Vec<u8>, StoreError> {
+pub fn save(device: &mut Device) -> Result<Vec<u8>, StoreError> {
     device.export_all()
 }
 

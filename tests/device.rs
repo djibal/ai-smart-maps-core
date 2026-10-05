@@ -463,6 +463,42 @@ fn routes_become_training_pairs_only_after_opt_in() {
 }
 
 #[test]
+fn the_training_record_travels_in_the_blob_only_while_opted_in() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    device.training().opt_in("scorer-1");
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    let pairs = device.training().pairs().to_vec();
+    assert_eq!(pairs.len(), 1);
+
+    let blob = device.export_all().unwrap();
+    let mut reopened = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
+    reopened.import_all(&blob).unwrap();
+    assert!(reopened.training().opted_in());
+    assert_eq!(reopened.training().model_version_id(), Some("scorer-1"));
+    assert_eq!(reopened.training().pairs(), pairs.as_slice());
+
+    device.training().clear_opt_in();
+    let blob = device.export_all().unwrap();
+    let mut opted_out = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
+    opted_out.import_all(&blob).unwrap();
+    assert!(!opted_out.training().opted_in());
+    assert!(opted_out.training().pairs().is_empty());
+
+    reopened.rotate_cache(&[4u8; 32], 90).unwrap();
+    assert!(reopened.training().pairs().is_empty());
+    assert!(!reopened.training().opted_in());
+    let blob = reopened.export_all().unwrap();
+    let mut rotated = Device::open(&[4u8; 32], &source_public_key()).unwrap();
+    rotated.import_all(&blob).unwrap();
+    assert!(rotated.training().pairs().is_empty());
+}
+
+#[test]
 fn a_device_without_a_scorer_does_not_route() {
     let mut device = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
     device

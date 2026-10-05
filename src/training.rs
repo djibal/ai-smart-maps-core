@@ -83,11 +83,104 @@ impl TrainingRecord {
         self.opted_in
     }
 
+    /// Bytes for the sealed cache. Opt-in flag, model version, cap, then
+    /// the pairs as eight numbers and a flag each. Not a contract.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = vec![u8::from(self.opted_in)];
+        let version = self.model_version_id.as_deref().unwrap_or("");
+        out.extend((version.len() as u32).to_be_bytes());
+        out.extend(version.as_bytes());
+        out.extend((self.cap as u64).to_be_bytes());
+        out.extend((self.pairs.len() as u64).to_be_bytes());
+        for pair in &self.pairs {
+            for features in [&pair.left, &pair.right] {
+                out.extend(features.edge_count.to_be_bytes());
+                out.extend(features.weight_sum.to_be_bytes());
+                out.extend(features.hazard_sum.to_be_bytes());
+                out.extend(features.hazard_missing.to_be_bytes());
+            }
+            out.push(u8::from(pair.left_has_lower_cost));
+        }
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let mut reader = Reader(bytes);
+        let opted_in = flag(reader.byte()?)?;
+        let version_len = reader.u32()? as usize;
+        let version = String::from_utf8(reader.take(version_len)?.to_vec()).ok()?;
+        let cap = usize::try_from(reader.u64()?).ok()?;
+        let count = usize::try_from(reader.u64()?).ok()?;
+        let mut pairs = Vec::with_capacity(count.min(TRAINING_PAIR_CAP));
+        for _ in 0..count {
+            let left = reader.features()?;
+            let right = reader.features()?;
+            let left_has_lower_cost = flag(reader.byte()?)?;
+            pairs.push(TrainingPair {
+                left,
+                right,
+                left_has_lower_cost,
+            });
+        }
+        if !reader.0.is_empty() || pairs.len() > cap || (!opted_in && !pairs.is_empty()) {
+            return None;
+        }
+        Some(Self {
+            opted_in,
+            pairs,
+            model_version_id: (!version.is_empty()).then_some(version),
+            cap,
+        })
+    }
+
     pub fn pairs(&self) -> &[TrainingPair] {
         &self.pairs
     }
 
     pub fn model_version_id(&self) -> Option<&str> {
         self.model_version_id.as_deref()
+    }
+}
+
+fn flag(byte: u8) -> Option<bool> {
+    match byte {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
+struct Reader<'a>(&'a [u8]);
+
+impl Reader<'_> {
+    fn take(&mut self, len: usize) -> Option<&[u8]> {
+        let (head, rest) = self.0.split_at_checked(len)?;
+        self.0 = rest;
+        Some(head)
+    }
+
+    fn byte(&mut self) -> Option<u8> {
+        self.take(1).map(|b| b[0])
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        self.take(4)?.try_into().ok().map(u32::from_be_bytes)
+    }
+
+    fn u64(&mut self) -> Option<u64> {
+        self.take(8)?.try_into().ok().map(u64::from_be_bytes)
+    }
+
+    fn f64(&mut self) -> Option<f64> {
+        self.take(8)?.try_into().ok().map(f64::from_be_bytes)
+    }
+
+    fn features(&mut self) -> Option<Features> {
+        Some(Features {
+            edge_count: self.u32()?,
+            weight_sum: self.f64()?,
+            hazard_sum: self.f64()?,
+            hazard_missing: self.u32()?,
+        })
     }
 }

@@ -132,21 +132,30 @@ impl Device {
     }
 
     /// The whole sealed cache as one encrypted blob for the platform to
-    /// persist: tiles, scorer artifacts, routes, reports, and the reporter
-    /// key. Still encrypted under the cache key.
-    pub fn export_all(&self) -> Result<Vec<u8>, StoreError> {
+    /// persist: tiles, scorer artifacts, routes, reports, the reporter
+    /// key, and the training record with its opt-in. Still encrypted
+    /// under the cache key.
+    pub fn export_all(&mut self) -> Result<Vec<u8>, StoreError> {
+        self.store.put(TRAINING_RECORD, &self.training.encode())?;
         self.store.seal_all()
     }
 
     /// Rebuilds the device from a blob made by [`Self::export_all`] under
-    /// the same cache key. Tiles and scorers come back in memory and in
-    /// the budget. A blob from another key is refused and nothing changes.
+    /// the same cache key. Tiles, scorers, and the training record come
+    /// back in memory and in the budget. A blob from another key is
+    /// refused and nothing changes.
     pub fn import_all(&mut self, blob: &[u8]) -> Result<(), StoreError> {
         self.store.open_all(blob)?;
         self.tiles = TileCache::new();
         self.budget = Budget::with_limit(self.budget.limit());
         self.scorer = Host::new();
         self.active = None;
+        self.training = self
+            .store
+            .get(TRAINING_RECORD)
+            .ok()
+            .and_then(|bytes| TrainingRecord::decode(&bytes))
+            .unwrap_or_default();
         self.router = Router::new();
 
         for name in self.store.names_with_prefix("tile:") {
@@ -550,6 +559,7 @@ fn model_record_key(id: &str) -> String {
 }
 
 const ACTIVE_RECORD: &str = "active-scorer";
+const TRAINING_RECORD: &str = "training";
 
 /// Length-prefixed local record for the sealed cache. Not a contract.
 fn encode_model_record(record: &ModelVersionRecord) -> Vec<u8> {

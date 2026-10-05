@@ -113,7 +113,7 @@ fn a_saved_cache_reopens_with_the_same_route_scorer_and_reporter_key() {
     )
     .unwrap();
     let key = device.reporter_key().unwrap();
-    let blob = save(&device).unwrap();
+    let blob = save(&mut device).unwrap();
     assert!(!String::from_utf8_lossy(&blob).contains("tile-1"));
     assert!(!String::from_utf8_lossy(&blob).contains(&key.hex()));
 

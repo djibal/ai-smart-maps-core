@@ -60,6 +60,24 @@ fn the_cap_drops_the_oldest_pair_and_a_repeated_pair_is_kept_once() {
 }
 
 #[test]
+fn the_record_round_trips_and_a_record_with_pairs_but_no_opt_in_is_refused() {
+    let mut record = TrainingRecord::with_cap(3);
+    record.opt_in("scorer-1");
+    record.record(sample()).unwrap();
+    let decoded = TrainingRecord::decode(&record.encode()).unwrap();
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.cap(), 3);
+
+    let empty = TrainingRecord::new();
+    assert_eq!(TrainingRecord::decode(&empty.encode()), Some(empty));
+
+    let mut bytes = record.encode();
+    bytes[0] = 0;
+    assert_eq!(TrainingRecord::decode(&bytes), None);
+    assert_eq!(TrainingRecord::decode(&record.encode()[..10]), None);
+}
+
+#[test]
 fn clearing_the_opt_in_deletes_the_pairs() {
     let mut record = TrainingRecord::new();
     record.opt_in("scorer-1");
