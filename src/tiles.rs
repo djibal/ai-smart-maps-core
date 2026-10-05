@@ -109,6 +109,10 @@ impl TileCache {
         self.tiles.retain(|tile| ids.contains(&tile.id));
     }
 
+    pub fn get(&self, id: &str) -> Option<&TileRecord> {
+        self.tiles.iter().find(|tile| tile.id == id)
+    }
+
     /// Every cached tile whose graph has the edge, for a report to change.
     pub fn with_edge_mut(&mut self, edge_id: &str) -> Vec<&mut TileRecord> {
         self.tiles

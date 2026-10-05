@@ -41,8 +41,16 @@ pub enum DeviceError {
     TileRejected,
     NoScorer,
     NoTile,
+    /// A reroute with no sealed route to continue.
+    NoRoute,
     Rejected,
     Unreachable,
+}
+
+#[derive(Clone, Copy)]
+enum Limit {
+    Initial,
+    Reroute,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +229,82 @@ impl Device {
         trip: &Trip<'_>,
     ) -> Result<Outcome, DeviceError> {
         let active = self.active.clone().ok_or(DeviceError::NoScorer)?;
+        let (tile_id, graph, destination_id) = {
+            let (tile, destination_id) = self.resolve(origin, destination)?;
+            (tile.id.clone(), tile.graph.clone(), destination_id)
+        };
+        self.drive(
+            &active,
+            origin,
+            &destination_id,
+            &tile_id,
+            &graph,
+            trip,
+            trip.map_age_days,
+            Limit::Initial,
+        )
+    }
+
+    /// Mid-trip, from a new position on the same tile toward the same
+    /// destination. Needs the sealed route for `origin`, `destination`,
+    /// and `tile_id`, and that tile still cached. Runs under the 1-second
+    /// reroute limit. When the tile's `observed_at` is more than 90 days
+    /// before `trip.now`, the map age fed to confidence is that tile age,
+    /// so the result warns. Unreachable and rollback rules are unchanged.
+    pub fn reroute(
+        &mut self,
+        origin: &str,
+        destination: &str,
+        tile_id: &str,
+        from: &str,
+        trip: &Trip<'_>,
+    ) -> Result<Outcome, DeviceError> {
+        let active = self.active.clone().ok_or(DeviceError::NoScorer)?;
+        if from.is_empty() || destination.is_empty() {
+            return Err(DeviceError::Rejected);
+        }
+        if self.sealed_route(origin, destination, tile_id).is_none() {
+            return Err(DeviceError::NoRoute);
+        }
+        let (graph, tile_age_days) = {
+            let tile = self.tiles.get(tile_id).ok_or(DeviceError::NoTile)?;
+            if !tile.graph.has_node(from) || !tile.graph.has_node(destination) {
+                return Err(DeviceError::NoTile);
+            }
+            (
+                tile.graph.clone(),
+                days_between(&tile.observed_at, trip.now).unwrap_or(0.0),
+            )
+        };
+        let map_age_days = if tile_age_days > 90.0 {
+            trip.map_age_days.max(tile_age_days)
+        } else {
+            trip.map_age_days
+        };
+        self.drive(
+            &active,
+            from,
+            destination,
+            tile_id,
+            &graph,
+            trip,
+            map_age_days,
+            Limit::Reroute,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn drive(
+        &mut self,
+        active: &ActiveScorer,
+        origin: &str,
+        destination_id: &str,
+        tile_id: &str,
+        graph: &Graph,
+        trip: &Trip<'_>,
+        map_age_days: f64,
+        limit: Limit,
+    ) -> Result<Outcome, DeviceError> {
         let accepted = self.scorer.accepted_version(
             &active.id,
             &active.presented,
@@ -234,29 +318,25 @@ impl Device {
             None => (active.id.clone(), true),
         };
 
-        let (tile_id, graph, destination_id) = {
-            let (tile, destination_id) = self.resolve(origin, destination)?;
-            (tile.id.clone(), tile.graph.clone(), destination_id)
-        };
-
         let request = Request {
             origin,
-            destination: &destination_id,
-            tile_id: &tile_id,
+            destination: destination_id,
+            tile_id,
             now: trip.now,
             model_version_id: &model_version_id,
-            map_age_days: trip.map_age_days,
+            map_age_days,
             report_count: trip.report_count,
             rolled_back,
             route_novelty: trip.route_novelty,
             environment: trip.environment,
         };
-        let route = self
-            .router
-            .route(&graph, &request)
-            .ok_or(DeviceError::Unreachable)?;
+        let found = match limit {
+            Limit::Initial => self.router.route(graph, &request),
+            Limit::Reroute => self.router.reroute(graph, &request),
+        };
+        let route = found.ok_or(DeviceError::Unreachable)?;
 
-        let chosen = features(&graph, &route.edge_ids).ok();
+        let chosen = features(graph, &route.edge_ids).ok();
         let prediction = chosen.as_ref().and_then(|found| {
             self.scorer
                 .score(
@@ -270,20 +350,20 @@ impl Device {
 
         if self.training.opted_in() {
             if let Some(chosen) = chosen {
-                self.collect_pair(&graph, &request, &route, chosen);
+                self.collect_pair(graph, &request, &route, chosen);
             }
         }
 
         let sealed = match encode_route(&route) {
             Ok(bytes) => self
                 .store
-                .put(&route_key(origin, &destination_id, &tile_id), &bytes)
+                .put(&route_key(origin, destination_id, tile_id), &bytes)
                 .is_ok(),
             Err(_) => false,
         };
 
         Ok(Outcome {
-            tile_id,
+            tile_id: tile_id.to_string(),
             route,
             prediction,
             rolled_back,
@@ -536,6 +616,30 @@ fn route_key(origin: &str, destination: &str, tile_id: &str) -> String {
 
 fn report_key(edge_id: &str, now: &str) -> String {
     format!("report:{edge_id}:{now}")
+}
+
+/// Whole days from `from` to `to`, both starting with a `YYYY-MM-DD`
+/// calendar date as in RFC 3339. `None` when either does not.
+fn days_between(from: &str, to: &str) -> Option<f64> {
+    Some((civil_day(to)? - civil_day(from)?) as f64)
+}
+
+fn civil_day(text: &str) -> Option<i64> {
+    let date = text.get(..10)?;
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_index = (month + 9) % 12;
+    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
 }
 
 fn path_cost(graph: &Graph, edge_ids: &[String]) -> f64 {

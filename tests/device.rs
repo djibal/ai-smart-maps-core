@@ -499,6 +499,113 @@ fn the_training_record_travels_in_the_blob_only_while_opted_in() {
 }
 
 #[test]
+fn a_reroute_continues_the_sealed_route_from_a_new_position() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    assert_eq!(
+        device.reroute("a", "c", "t", "b", &trip(Environment::Simple)),
+        Err(DeviceError::NoRoute),
+        "nothing sealed yet"
+    );
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+
+    let outcome = device
+        .reroute("a", "c", "t", "b", &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(outcome.tile_id, "t");
+    assert_eq!(outcome.route.edge_ids, vec!["rest".to_string()]);
+    assert!(!outcome.route.confidence.warns());
+    assert!(!outcome.rolled_back);
+    assert_eq!(outcome.prediction.unwrap().version_id, "scorer-1");
+    assert!(outcome.sealed);
+    assert_eq!(
+        device.sealed_route("b", "c", "t").unwrap().edge_ids,
+        vec!["rest".to_string()]
+    );
+
+    assert_eq!(
+        device.reroute("a", "c", "t", "", &trip(Environment::Simple)),
+        Err(DeviceError::Rejected)
+    );
+    assert_eq!(
+        device.reroute("a", "c", "t", "nowhere", &trip(Environment::Simple)),
+        Err(DeviceError::NoTile)
+    );
+    assert_eq!(
+        device.reroute("a", "c", "other", "b", &trip(Environment::Simple)),
+        Err(DeviceError::NoRoute)
+    );
+
+    device
+        .report("rest", Kind::Closure, None, &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(
+        device.reroute("a", "c", "t", "b", &trip(Environment::Simple)),
+        Err(DeviceError::Unreachable)
+    );
+}
+
+#[test]
+fn a_reroute_on_a_tile_older_than_ninety_days_warns() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("old", "2026-01-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let first = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert!(
+        !first.route.confidence.warns(),
+        "the initial route trusts the trip's map age"
+    );
+
+    let rerouted = device
+        .reroute("a", "c", "old", "b", &trip(Environment::Simple))
+        .unwrap();
+    assert!(rerouted.route.confidence.warns(), "277 days is past 90");
+    assert_eq!(rerouted.route.edge_ids, vec!["rest".to_string()]);
+
+    let mut fresh = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
+    fresh.install_scorer(&scorer("scorer-1", None), SUM);
+    fresh
+        .load_tile(local_tile("new", "2026-07-07T00:00:00Z"), Origin::Local)
+        .unwrap();
+    fresh
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    let rerouted = fresh
+        .reroute("a", "c", "new", "b", &trip(Environment::Simple))
+        .unwrap();
+    assert!(
+        !rerouted.route.confidence.warns(),
+        "90 days exactly is not past 90"
+    );
+}
+
+#[test]
+fn a_reroute_follows_the_rollback_rule() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    device.present_artifact(b"tampered").unwrap();
+    let outcome = device
+        .reroute("a", "c", "t", "b", &trip(Environment::Simple))
+        .unwrap();
+    assert!(outcome.rolled_back);
+    assert_eq!(outcome.route.model_version_id, "scorer-0");
+    assert_eq!(outcome.prediction.unwrap().version_id, "scorer-0");
+    assert!(outcome.route.confidence.warns());
+}
+
+#[test]
 fn a_device_without_a_scorer_does_not_route() {
     let mut device = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
     device
