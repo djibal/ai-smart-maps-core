@@ -3,14 +3,13 @@ use std::time::Duration;
 use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
 use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
-use ai_smart_maps_core::reports::Kind;
 use ai_smart_maps_core::scorer::Features;
 use ai_smart_maps_core::store::StoreError;
 use ai_smart_maps_core::tiles::Origin;
 use ai_smart_maps_core::training::TrainingPair;
 use ai_smart_maps_shell::{
-    clear_local, open, restore, save, show, show_reroute, Continue, Device, DeviceError, Place,
-    ScreenError, Timing, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
+    clear_local, open, report, restore, save, show, show_reroute, Continue, Device, DeviceError,
+    Kind, Place, ScreenError, Timing, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
 };
 
 const SUM: &[u8] = include_bytes!("../../../fixtures/sum_scorer.onnx");
@@ -237,6 +236,57 @@ fn an_unreachable_node_returns_no_screen() {
         Timing::default(),
     );
     assert_eq!(result, Err(ScreenError::Device(DeviceError::Unreachable)));
+}
+
+#[test]
+fn a_report_changes_the_next_screen_and_an_unknown_edge_is_an_error() {
+    let mut device = device_with(Graph {
+        nodes: vec![node("a", 0.0), node("b", 1.0), node("c", 2.0)],
+        edges: vec![edge("ab", "a", "b"), edge("bc", "b", "c")],
+    });
+    let first = show(
+        "ios",
+        &mut device,
+        "a",
+        Place::Node("c"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    assert_eq!(first.edge_ids, vec!["ab".to_string(), "bc".to_string()]);
+
+    report(
+        &mut device,
+        "bc",
+        Kind::Closure,
+        Some("blocked"),
+        &trip(Environment::Simple),
+    )
+    .unwrap();
+    let after = show(
+        "ios",
+        &mut device,
+        "a",
+        Place::Node("c"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    );
+    assert_eq!(after, Err(ScreenError::Device(DeviceError::Unreachable)));
+    assert_ne!(
+        after.ok().map(|screen| screen.edge_ids),
+        Some(first.edge_ids)
+    );
+
+    assert_eq!(
+        report(
+            &mut device,
+            "nowhere",
+            Kind::Hazard,
+            None,
+            &trip(Environment::Simple),
+        ),
+        Err(ScreenError::Device(DeviceError::NoTile))
+    );
 }
 
 #[test]

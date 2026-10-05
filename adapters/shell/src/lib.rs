@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 pub use ai_smart_maps_core::device::{Device, DeviceError, Trip};
+pub use ai_smart_maps_core::reports::Kind;
 use ai_smart_maps_core::snap::Destination;
 use ai_smart_maps_core::store::StoreError;
 
@@ -132,6 +133,21 @@ pub fn restore(cache_key: &[u8], map_source_key: &[u8], blob: &[u8]) -> Result<D
     let mut device = open(cache_key, map_source_key)?;
     device.import_all(blob)?;
     Ok(device)
+}
+
+/// A local report from this device. An unknown edge is `ScreenError`.
+/// The next [`show`] of a closed remaining edge is not the previous list.
+pub fn report(
+    device: &mut Device,
+    edge_id: &str,
+    kind: Kind,
+    detail: Option<&str>,
+    trip: &Trip<'_>,
+) -> Result<(), ScreenError> {
+    device
+        .report(edge_id, kind, detail, trip)
+        .map(|_| ())
+        .map_err(ScreenError::Device)
 }
 
 /// The clear-data action. Sealed routes and the training opt-in go.
