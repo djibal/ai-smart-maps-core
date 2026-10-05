@@ -108,7 +108,7 @@ fn apply_groups(graph: &mut Graph, observations: &[Observation]) {
         let (kind, reputations) = consensus(group);
         match kind {
             Kind::Closure => edge.constraint = Constraint::Closed,
-            Kind::Hazard => edge.hazard = Some(share(&group, &reputations, Kind::Hazard)),
+            Kind::Hazard => edge.hazard = Some(share(group, &reputations, Kind::Hazard)),
             Kind::Clear => {
                 edge.hazard = Some(0.0);
                 edge.constraint = Constraint::Open;

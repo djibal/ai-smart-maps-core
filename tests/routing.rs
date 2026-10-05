@@ -179,7 +179,7 @@ fn adapters_emit_the_graph_type_and_the_router_source_does_not_name_them() {
         travel_cost: 8.0,
         closed: false,
     };
-    let from_osm = osm::graph(&[record.clone()]);
+    let from_osm = osm::graph(std::slice::from_ref(&record));
     let from_commercial = commercial::graph(&[record]);
     assert_eq!(from_osm.edges[0].source, Source::Osm);
     assert_eq!(from_osm.edges[0].weight, 8.0);

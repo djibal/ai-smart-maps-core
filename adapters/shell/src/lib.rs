@@ -49,6 +49,9 @@ pub enum ScreenError {
     TileTooSlow,
 }
 
+// The next slice routes this call through `Device`, which removes the graph
+// and router arguments.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     platform: &'static str,
     graph: &Graph,
