@@ -7,15 +7,16 @@
 use crate::budget::Budget;
 use crate::confidence::{Environment, RouteNovelty};
 use crate::contracts::{encode_route, encode_tile, ModelVersionRecord, TileRecord};
+use crate::graph::{Constraint, Edge, Graph};
 use crate::log::{DiagnosticLog, ErrorCode};
 use crate::reporter::{self, ReporterKey};
 use crate::reports::{self, AgedReport, Kind, Observation};
 use crate::router::{Request, Route, Router};
-use crate::scorer::{features, Host, Prediction};
+use crate::scorer::{features, Features, Host, Prediction};
 use crate::snap::{self, Destination};
 use crate::store::{LocalStore, StoreError};
 use crate::tiles::{Origin, TileCache};
-use crate::training::TrainingRecord;
+use crate::training::{TrainingPair, TrainingRecord};
 
 #[derive(Clone, Debug)]
 pub struct Trip<'a> {
@@ -246,16 +247,23 @@ impl Device {
             .route(&graph, &request)
             .ok_or(DeviceError::Unreachable)?;
 
-        let prediction = features(&graph, &route.edge_ids).ok().and_then(|found| {
+        let chosen = features(&graph, &route.edge_ids).ok();
+        let prediction = chosen.as_ref().and_then(|found| {
             self.scorer
                 .score(
                     &active.id,
                     &active.presented,
                     active.previous_id.as_deref(),
-                    &found,
+                    found,
                 )
                 .ok()
         });
+
+        if self.training.opted_in() {
+            if let Some(chosen) = chosen {
+                self.collect_pair(&graph, &request, &route, chosen);
+            }
+        }
 
         let sealed = match encode_route(&route) {
             Ok(bytes) => self
@@ -366,6 +374,41 @@ impl Device {
         &mut self.training
     }
 
+    /// One pair per routed request while opted in: the chosen route against
+    /// the best route that avoids its first edge, labelled by deterministic
+    /// cost. A scratch router finds the alternative so the route cache and
+    /// the log see nothing. No alternative, no pair.
+    fn collect_pair(
+        &mut self,
+        graph: &Graph,
+        request: &Request<'_>,
+        route: &Route,
+        chosen: Features,
+    ) {
+        let Some(first) = route.edge_ids.first() else {
+            return;
+        };
+        let mut detour = graph.clone();
+        for edge in &mut detour.edges {
+            if edge.id == *first {
+                edge.constraint = Constraint::Closed;
+            }
+        }
+        let Some(alternative) = Router::new().route(&detour, request) else {
+            return;
+        };
+        let Ok(other) = features(graph, &alternative.edge_ids) else {
+            return;
+        };
+        let left_has_lower_cost =
+            path_cost(graph, &route.edge_ids) <= path_cost(graph, &alternative.edge_ids);
+        let _ = self.training.record(TrainingPair {
+            left: chosen,
+            right: other,
+            left_has_lower_cost,
+        });
+    }
+
     /// Clears the sealed cache, the reporter key inside it, and the
     /// training opt-in. The cache key stays.
     pub fn clear_local_data(&mut self) {
@@ -468,6 +511,14 @@ fn route_key(origin: &str, destination: &str, tile_id: &str) -> String {
 
 fn report_key(edge_id: &str, now: &str) -> String {
     format!("report:{edge_id}:{now}")
+}
+
+fn path_cost(graph: &Graph, edge_ids: &[String]) -> f64 {
+    edge_ids
+        .iter()
+        .filter_map(|id| graph.edges.iter().find(|edge| edge.id == *id))
+        .map(Edge::cost)
+        .sum()
 }
 
 fn tile_key(id: &str) -> String {

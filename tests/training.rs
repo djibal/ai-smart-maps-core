@@ -1,5 +1,5 @@
 use ai_smart_maps_core::scorer::Features;
-use ai_smart_maps_core::training::{TrainingPair, TrainingRecord};
+use ai_smart_maps_core::training::{TrainingPair, TrainingRecord, TRAINING_PAIR_CAP};
 
 fn sample() -> TrainingPair {
     TrainingPair {
@@ -37,6 +37,26 @@ fn an_opted_in_record_keeps_the_pair_and_the_model_version() {
     assert_eq!(record.pairs().len(), 1);
     assert!(record.pairs()[0].left_has_lower_cost);
     assert_eq!(record.pairs()[0].left.edge_count, 2);
+}
+
+#[test]
+fn the_cap_drops_the_oldest_pair_and_a_repeated_pair_is_kept_once() {
+    assert_eq!(TrainingRecord::new().cap(), TRAINING_PAIR_CAP);
+    assert_eq!(TRAINING_PAIR_CAP, 10_000);
+
+    let mut record = TrainingRecord::with_cap(2);
+    record.opt_in("scorer-1");
+    record.record(sample()).unwrap();
+    record.record(sample()).unwrap();
+    assert_eq!(record.pairs().len(), 1);
+
+    let mut second = sample();
+    second.left.edge_count = 7;
+    let mut third = sample();
+    third.left.edge_count = 8;
+    record.record(second.clone()).unwrap();
+    record.record(third.clone()).unwrap();
+    assert_eq!(record.pairs(), &[second, third]);
 }
 
 #[test]

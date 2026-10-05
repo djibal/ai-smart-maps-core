@@ -357,6 +357,60 @@ fn sealed_reports_follow_the_ninety_day_rule_and_leave_with_a_clear() {
 }
 
 #[test]
+fn routes_become_training_pairs_only_after_opt_in() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert!(device.training().pairs().is_empty());
+
+    device.training().opt_in("scorer-1");
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    let pairs = device.training().pairs().to_vec();
+    assert_eq!(pairs.len(), 1, "the same decision is kept once");
+    let pair = &pairs[0];
+    assert_eq!(pair.left.edge_count, 1);
+    assert_eq!(pair.left.weight_sum, 4.0);
+    assert_eq!(pair.left.hazard_missing, 1);
+    assert_eq!(pair.right.edge_count, 2);
+    assert_eq!(pair.right.weight_sum, 2.0);
+    assert_eq!(pair.right.hazard_sum, 1.0);
+    assert_eq!(pair.right.hazard_missing, 1);
+    assert!(pair.left_has_lower_cost, "4.0 against 1.0 + 3.0 + 1.0");
+
+    device
+        .route("a", Destination::NodeId("b"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(
+        device.training().pairs().len(),
+        1,
+        "a to b has one path, so no alternative and no pair"
+    );
+
+    assert!(
+        !device.diagnostics().contains("via,rest"),
+        "the alternative search is not logged: {}",
+        device.diagnostics()
+    );
+
+    device.clear_local_data();
+    assert!(device.training().pairs().is_empty());
+    device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert!(device.training().pairs().is_empty());
+}
+
+#[test]
 fn a_device_without_a_scorer_does_not_route() {
     let mut device = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
     device
