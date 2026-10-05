@@ -85,6 +85,11 @@ impl Host {
             .insert(version_id.to_string(), bytes.to_vec());
     }
 
+    /// Drops every installed artifact. The log stays.
+    pub fn uninstall_all(&mut self) {
+        self.bytes_for_version.clear();
+    }
+
     /// Returns the version whose stored bytes match `presented`.
     /// A mismatch refuses the claimed version and returns `previous_id`
     /// when that version is installed. Otherwise it refuses to score.

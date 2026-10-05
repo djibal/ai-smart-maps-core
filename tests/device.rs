@@ -242,9 +242,54 @@ fn clearing_local_data_removes_sealed_routes_and_the_opt_in() {
         .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
         .unwrap();
     assert!(device.sealed_route("a", "c", "t").is_some());
+    let log_before = device.diagnostics();
     device.clear_local_data();
     assert!(device.sealed_route("a", "c", "t").is_none());
     assert!(!device.training().opted_in());
+
+    assert!(device.tile_ids().is_empty());
+    assert_eq!(device.budget_used(), 0);
+    assert_eq!(
+        device.route("a", Destination::NodeId("c"), &trip(Environment::Simple)),
+        Err(DeviceError::NoScorer)
+    );
+    device.install_scorer(&scorer("scorer-1", None), SUM);
+    assert_eq!(
+        device.route("a", Destination::NodeId("c"), &trip(Environment::Simple)),
+        Err(DeviceError::NoTile)
+    );
+    assert_eq!(
+        device.export_all().map(|blob| blob.len()),
+        Device::open(&CACHE_KEY, &source_public_key())
+            .unwrap()
+            .tap_install(&scorer("scorer-1", None), SUM)
+            .export_all()
+            .map(|blob| blob.len()),
+        "the blob after a clear holds only what was reloaded"
+    );
+    assert_eq!(
+        device.diagnostics(),
+        log_before,
+        "the log is not personal data"
+    );
+
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    assert!(device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .is_ok());
+}
+
+trait TapInstall {
+    fn tap_install(self, record: &ModelVersionRecord, bytes: &[u8]) -> Self;
+}
+
+impl TapInstall for Device {
+    fn tap_install(mut self, record: &ModelVersionRecord, bytes: &[u8]) -> Self {
+        self.install_scorer(record, bytes);
+        self
+    }
 }
 
 #[test]
@@ -404,10 +449,17 @@ fn routes_become_training_pairs_only_after_opt_in() {
 
     device.clear_local_data();
     assert!(device.training().pairs().is_empty());
+    device.install_scorer(&scorer("scorer-1", None), SUM);
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
     device
         .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
         .unwrap();
-    assert!(device.training().pairs().is_empty());
+    assert!(
+        device.training().pairs().is_empty(),
+        "the clear also removed the opt-in"
+    );
 }
 
 #[test]

@@ -413,7 +413,7 @@ impl Device {
     /// training opt-in. The cache key stays.
     pub fn clear_local_data(&mut self) {
         self.store.clear();
-        self.training.clear_opt_in();
+        self.forget_everything();
     }
 
     /// Rotates the cache key once `age_days` is at least 90. The sealed
@@ -421,8 +421,24 @@ impl Device {
     /// nothing changes.
     pub fn rotate_cache(&mut self, new_key: &[u8], age_days: u32) -> Result<(), StoreError> {
         self.store.rotate(new_key, age_days)?;
-        self.training.clear_opt_in();
+        self.forget_everything();
         Ok(())
+    }
+
+    /// What a clear or a rotation deletes beyond the sealed records: the
+    /// tiles, the scorer artifacts, the active version, the budget, the
+    /// cached routes, and the training record. The device routes again
+    /// only after the platform reloads tiles and a scorer. The diagnostic
+    /// log stays; it holds edge ids, durations, and error codes only.
+    fn forget_everything(&mut self) {
+        for id in self.budget.tile_ids() {
+            self.router.forget_tile(&id);
+        }
+        self.tiles = TileCache::new();
+        self.budget = Budget::with_limit(self.budget.limit());
+        self.scorer.uninstall_all();
+        self.active = None;
+        self.training.clear_opt_in();
     }
 
     /// The reporter key from the sealed cache, created and sealed when the
