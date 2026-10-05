@@ -44,7 +44,7 @@ pub struct Request<'a> {
 
 #[derive(Default)]
 pub struct Router {
-    cache: HashMap<(String, String, String), Route>,
+    cache: HashMap<(String, String, String, u32), Route>,
     log: DiagnosticLog,
 }
 
@@ -60,7 +60,7 @@ impl Router {
     /// Drops every cached route on the tile. A report that changes the
     /// tile's graph calls this so the next request routes again.
     pub fn forget_tile(&mut self, tile_id: &str) {
-        self.cache.retain(|(_, _, cached), _| cached != tile_id);
+        self.cache.retain(|(_, _, cached, _), _| cached != tile_id);
     }
 
     /// Returns the stored route when the origin, destination, and tile id
@@ -88,6 +88,7 @@ impl Router {
             request.origin.to_string(),
             request.destination.to_string(),
             request.tile_id.to_string(),
+            request.report_count,
         );
         if let Some(stored) = self.cache.get(&key) {
             let found = stored.clone();

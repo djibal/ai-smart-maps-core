@@ -606,6 +606,39 @@ fn a_reroute_follows_the_rollback_rule() {
 }
 
 #[test]
+fn sealed_reports_raise_the_route_report_count() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let none = Trip {
+        report_count: 0,
+        ..trip(Environment::Simple)
+    };
+    let first = device.route("a", Destination::NodeId("c"), &none).unwrap();
+    assert_eq!(first.route.confidence.report_count, 0);
+
+    device
+        .report("long", Kind::Hazard, Some("flood"), &none)
+        .unwrap();
+    let after = device.route("a", Destination::NodeId("c"), &none).unwrap();
+    assert_eq!(after.route.confidence.report_count, 1);
+    assert_eq!(first.route.edge_ids, vec!["long".to_string()]);
+
+    let supplied = Trip {
+        report_count: 4,
+        ..trip(Environment::Simple)
+    };
+    let higher = device
+        .route("a", Destination::NodeId("c"), &supplied)
+        .unwrap();
+    assert_eq!(higher.route.confidence.report_count, 4);
+
+    let continued = device.reroute("a", "c", "t", "a", &none).unwrap();
+    assert_eq!(continued.route.confidence.report_count, 1);
+}
+
+#[test]
 fn a_device_without_a_scorer_does_not_route() {
     let mut device = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
     device

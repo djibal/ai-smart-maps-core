@@ -43,6 +43,8 @@ The newest tile whose graph contains both node ids is the one used for those nod
 
 While `training().opt_in` is set, every routed request records one training pair: the chosen route's four features against the best route that avoids its first edge, labelled by deterministic cost. A scratch router finds the alternative so the route cache and the log see nothing. No alternative, no pair. A repeated decision is kept once and the record holds at most `TRAINING_PAIR_CAP` (10,000) pairs, oldest out first. Nothing is recorded before opt-in and clearing deletes the pairs. `export_all` seals the training record, opt-in included, under `training`, and `import_all` restores it; a record that claims pairs without an opt-in is refused. Clear and rotation delete it.
 
+`route` and `reroute` take `report_count` as the greater of the caller's number and the sealed reports on the device, so one sealed hazard is enough to raise the count on the route.
+
 `Device::reroute` continues a sealed route from a new position on the same tile, under the 1-second reroute limit. A tile whose `observed_at` is more than 90 days before `trip.now` lowers confidence. With no sealed route it returns `NoRoute`. Unreachable and rollback rules are the same as the initial path.
 
 The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source. `show_reroute` continues a sealed trip from a new position under the same voice and tile limits; a closure on the remaining edge returns `Unreachable`, not the previous edge list.

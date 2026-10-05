@@ -325,7 +325,7 @@ impl Device {
             now: trip.now,
             model_version_id: &model_version_id,
             map_age_days,
-            report_count: trip.report_count,
+            report_count: trip.report_count.max(self.sealed_reports().len() as u32),
             rolled_back,
             route_novelty: trip.route_novelty,
             environment: trip.environment,
