@@ -1,12 +1,17 @@
 use std::time::Duration;
 
 use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
+use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
-use ai_smart_maps_core::router::Router;
-use ai_smart_maps_core::training::{TrainingPair, TrainingRecord};
+use ai_smart_maps_core::scorer::Features;
+use ai_smart_maps_core::tiles::Origin;
+use ai_smart_maps_core::training::TrainingPair;
 use ai_smart_maps_shell::{
-    clear_local, open_cache, show, Place, ScreenError, Trip, TILE_RENDER_LIMIT, VOICE_LIMIT,
+    clear_local, open, show, Device, DeviceError, Place, ScreenError, Timing, Trip,
+    TILE_RENDER_LIMIT, VOICE_LIMIT,
 };
+
+const SUM: &[u8] = include_bytes!("../../../fixtures/sum_scorer.onnx");
 
 fn node(id: &str, lat: f64) -> Node {
     Node {
@@ -32,72 +37,90 @@ fn edge(id: &str, src: &str, dst: &str) -> Edge {
 
 fn trip(environment: Environment) -> Trip<'static> {
     Trip {
-        tile_id: "tile-1",
-        now: "2026-10-04T00:00:00Z",
-        model_version_id: "scorer-1",
+        now: "2026-10-05T00:00:00Z",
         map_age_days: 1.0,
         report_count: 1,
-        rolled_back: false,
         route_novelty: RouteNovelty::Known,
         environment,
     }
 }
 
-fn line(id: &str, src: &str, dst: &str) -> Graph {
-    Graph {
-        nodes: vec![node(src, 0.0), node(dst, 1.0)],
-        edges: vec![edge(id, src, dst)],
-    }
+fn device_with(graph: Graph) -> Device {
+    let mut device = open(&[9u8; 32], &[0u8; 32]).unwrap();
+    device.install_scorer(
+        &ModelVersionRecord {
+            id: "scorer-1".to_string(),
+            artifact: "scorer-1.onnx".to_string(),
+            created_at: "2026-10-01T00:00:00Z".to_string(),
+            previous_id: None,
+        },
+        SUM,
+    );
+    device
+        .load_tile(
+            TileRecord {
+                id: "tile-1".to_string(),
+                observed_at: "2026-09-01T00:00:00Z".to_string(),
+                graph,
+                signature: None,
+            },
+            Origin::Local,
+        )
+        .unwrap();
+    device
+}
+
+fn line() -> Device {
+    device_with(Graph {
+        nodes: vec![node("a", 0.0), node("b", 1.0)],
+        edges: vec![edge("ab", "a", "b")],
+    })
 }
 
 #[test]
 fn the_screen_draws_the_core_edge_list_and_snaps_before_routing() {
-    let graph = Graph {
-        nodes: vec![node("a", 0.0), node("b", 1.0)],
-        edges: vec![edge("ab", "a", "b")],
-    };
+    let mut device = line();
     let screen = show(
         "ios",
-        &graph,
-        &mut Router::new(),
+        &mut device,
         "a",
         Place::Coordinate { lat: 1.0, lon: 0.0 },
         &trip(Environment::Simple),
-        Duration::from_millis(200),
-        TILE_RENDER_LIMIT,
+        Timing {
+            voice: VOICE_LIMIT,
+            tile: TILE_RENDER_LIMIT,
+        },
     )
     .unwrap();
+    assert_eq!(screen.tile_id, "tile-1");
     assert_eq!(screen.edge_ids, vec!["ab".to_string()]);
     assert!(!screen.warning);
     assert!(screen.voice_issued && screen.tile_drawn);
+    assert!(device.sealed_route("a", "b", "tile-1").is_some());
 }
 
 #[test]
 fn a_bad_destination_is_rejected_and_a_low_score_warns() {
-    let graph = line("ab", "a", "b");
+    let mut device = line();
     let rejected = show(
         "ios",
-        &graph,
-        &mut Router::new(),
+        &mut device,
         "a",
         Place::Coordinate {
             lat: 120.0,
             lon: 0.0,
         },
         &trip(Environment::Simple),
-        Duration::ZERO,
-        Duration::ZERO,
+        Timing::default(),
     );
-    assert_eq!(rejected, Err(ScreenError::Rejected));
+    assert_eq!(rejected, Err(ScreenError::Device(DeviceError::Rejected)));
     let warned = show(
         "android",
-        &graph,
-        &mut Router::new(),
+        &mut device,
         "a",
         Place::Node("b"),
         &trip(Environment::Complex),
-        Duration::ZERO,
-        Duration::ZERO,
+        Timing::default(),
     )
     .unwrap();
     assert!(warned.warning);
@@ -107,70 +130,66 @@ fn a_bad_destination_is_rejected_and_a_low_score_warns() {
 fn voice_and_tile_limits_are_inclusive() {
     assert_eq!(VOICE_LIMIT, Duration::from_millis(200));
     assert_eq!(TILE_RENDER_LIMIT, Duration::from_millis(500));
-    let graph = line("ab", "a", "b");
+    let mut device = line();
     let trip = trip(Environment::Simple);
+    let slow_voice = Timing {
+        voice: Duration::from_millis(201),
+        tile: Duration::ZERO,
+    };
     assert_eq!(
-        show(
-            "web",
-            &graph,
-            &mut Router::new(),
-            "a",
-            Place::Node("b"),
-            &trip,
-            Duration::from_millis(201),
-            Duration::ZERO,
-        ),
+        show("web", &mut device, "a", Place::Node("b"), &trip, slow_voice),
         Err(ScreenError::VoiceTooSlow)
     );
+    let slow_tile = Timing {
+        voice: Duration::ZERO,
+        tile: Duration::from_millis(501),
+    };
     assert_eq!(
-        show(
-            "web",
-            &graph,
-            &mut Router::new(),
-            "a",
-            Place::Node("b"),
-            &trip,
-            Duration::ZERO,
-            Duration::from_millis(501),
-        ),
+        show("web", &mut device, "a", Place::Node("b"), &trip, slow_tile),
         Err(ScreenError::TileTooSlow)
     );
 }
 
 #[test]
 fn an_unreachable_node_returns_no_screen() {
-    let graph = Graph {
+    let mut device = device_with(Graph {
         nodes: vec![node("a", 0.0), node("z", 2.0)],
         edges: vec![],
-    };
+    });
     let result = show(
         "web",
-        &graph,
-        &mut Router::new(),
+        &mut device,
         "a",
         Place::Node("z"),
         &trip(Environment::Simple),
-        Duration::ZERO,
-        Duration::ZERO,
+        Timing::default(),
     );
-    assert_eq!(result, Err(ScreenError::Unreachable));
+    assert_eq!(result, Err(ScreenError::Device(DeviceError::Unreachable)));
 }
 
 #[test]
-fn clear_removes_the_cache_and_the_training_pairs() {
-    let mut store = open_cache(&[9u8; 32]).unwrap();
-    store.put("route", b"edges").unwrap();
-    let mut training = TrainingRecord::new();
-    training.opt_in("scorer-1");
-    training
+fn clear_removes_the_sealed_routes_and_the_training_pairs() {
+    let mut device = line();
+    show(
+        "ios",
+        &mut device,
+        "a",
+        Place::Node("b"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    device.training().opt_in("scorer-1");
+    device
+        .training()
         .record(TrainingPair {
-            left: ai_smart_maps_core::scorer::Features {
+            left: Features {
                 edge_count: 1,
                 weight_sum: 1.0,
                 hazard_sum: 0.0,
                 hazard_missing: 0,
             },
-            right: ai_smart_maps_core::scorer::Features {
+            right: Features {
                 edge_count: 2,
                 weight_sum: 2.0,
                 hazard_sum: 0.0,
@@ -179,10 +198,10 @@ fn clear_removes_the_cache_and_the_training_pairs() {
             left_has_lower_cost: true,
         })
         .unwrap();
-    clear_local(&mut store, &mut training);
-    assert!(store.is_empty());
-    assert!(!training.opted_in());
-    assert!(training.pairs().is_empty());
+    clear_local(&mut device);
+    assert!(device.sealed_route("a", "b", "tile-1").is_none());
+    assert!(!device.training().opted_in());
+    assert!(device.training().pairs().is_empty());
 }
 
 #[test]
@@ -201,6 +220,14 @@ fn adapter_sources_stay_under_ten_percent_and_name_no_person() {
         for word in ["account", "password", "payment", "passkey", "contact"] {
             assert!(!lower.contains(word), "{name} contains {word}");
         }
+        assert!(
+            !source.contains("router::"),
+            "{name} calls the router directly"
+        );
+        assert!(
+            !source.contains("snap::resolve") && !source.contains("resolve("),
+            "{name} snaps on its own"
+        );
     }
     let core_lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
     assert!(!core_lib.contains("adapters"));

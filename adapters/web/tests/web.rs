@@ -1,12 +1,13 @@
-use std::time::Duration;
-
 use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
+use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
-use ai_smart_maps_core::router::Router;
-use ai_smart_maps_web::{show, Place, Trip, PLATFORM};
+use ai_smart_maps_core::tiles::Origin;
+use ai_smart_maps_web::{open, show, Place, Timing, Trip, PLATFORM};
+
+const SUM: &[u8] = include_bytes!("../../../fixtures/sum_scorer.onnx");
 
 #[test]
-fn the_web_screen_uses_the_core_edge_list() {
+fn the_web_screen_comes_from_the_device() {
     let graph = Graph {
         nodes: vec![
             Node {
@@ -32,26 +33,43 @@ fn the_web_screen_uses_the_core_edge_list() {
             valid_to: None,
         }],
     };
+    let mut device = open(&[9u8; 32], &[0u8; 32]).unwrap();
+    device.install_scorer(
+        &ModelVersionRecord {
+            id: "scorer-1".to_string(),
+            artifact: "scorer-1.onnx".to_string(),
+            created_at: "2026-10-01T00:00:00Z".to_string(),
+            previous_id: None,
+        },
+        SUM,
+    );
+    device
+        .load_tile(
+            TileRecord {
+                id: "tile-1".to_string(),
+                observed_at: "2026-09-01T00:00:00Z".to_string(),
+                graph,
+                signature: None,
+            },
+            Origin::Local,
+        )
+        .unwrap();
     let screen = show(
         PLATFORM,
-        &graph,
-        &mut Router::new(),
+        &mut device,
         "a",
         Place::Node("b"),
         &Trip {
-            tile_id: "tile-1",
-            now: "2026-10-04T00:00:00Z",
-            model_version_id: "scorer-1",
+            now: "2026-10-05T00:00:00Z",
             map_age_days: 1.0,
             report_count: 1,
-            rolled_back: false,
             route_novelty: RouteNovelty::Known,
             environment: Environment::Simple,
         },
-        Duration::ZERO,
-        Duration::ZERO,
+        Timing::default(),
     )
     .unwrap();
     assert_eq!(screen.platform, "web");
+    assert_eq!(screen.tile_id, "tile-1");
     assert_eq!(screen.edge_ids, vec!["ab".to_string()]);
 }

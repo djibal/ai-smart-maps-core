@@ -1,15 +1,12 @@
-//! Screen flow shared by the platform adapters.
-//! A coordinate is snapped before the router runs. The drawn route is the
-//! core's edge list. This crate does not choose a cost.
+//! Screen flow shared by the platform adapters. Every screen comes from
+//! `Device`, so tile admission, artifact rollback, snapping, and sealing
+//! run before anything is drawn. This crate does not choose a cost.
 
 use std::time::Duration;
 
-use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
-use ai_smart_maps_core::graph::Graph;
-use ai_smart_maps_core::router::{Request, Router};
-use ai_smart_maps_core::snap::{self, Destination};
-use ai_smart_maps_core::store::{LocalStore, StoreError};
-use ai_smart_maps_core::training::TrainingRecord;
+pub use ai_smart_maps_core::device::{Device, DeviceError, Trip};
+use ai_smart_maps_core::snap::Destination;
+use ai_smart_maps_core::store::StoreError;
 
 pub const VOICE_LIMIT: Duration = Duration::from_millis(200);
 pub const TILE_RENDER_LIMIT: Duration = Duration::from_millis(500);
@@ -20,21 +17,17 @@ pub enum Place<'a> {
     Coordinate { lat: f64, lon: f64 },
 }
 
-#[derive(Clone, Debug)]
-pub struct Trip<'a> {
-    pub tile_id: &'a str,
-    pub now: &'a str,
-    pub model_version_id: &'a str,
-    pub map_age_days: f64,
-    pub report_count: u32,
-    pub rolled_back: bool,
-    pub route_novelty: RouteNovelty,
-    pub environment: Environment,
+/// How long the platform took to speak and to draw, measured by the adapter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Timing {
+    pub voice: Duration,
+    pub tile: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Screen {
     pub platform: &'static str,
+    pub tile_id: String,
     pub edge_ids: Vec<String>,
     pub warning: bool,
     pub voice_issued: bool,
@@ -43,69 +36,48 @@ pub struct Screen {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ScreenError {
-    Rejected,
-    Unreachable,
+    Device(DeviceError),
     VoiceTooSlow,
     TileTooSlow,
 }
 
-// The next slice routes this call through `Device`, which removes the graph
-// and router arguments.
-#[allow(clippy::too_many_arguments)]
+/// Opens the device with the secure-store key and the map-source key.
+pub fn open(cache_key: &[u8], map_source_key: &[u8]) -> Result<Device, StoreError> {
+    Device::open(cache_key, map_source_key)
+}
+
 pub fn show(
     platform: &'static str,
-    graph: &Graph,
-    router: &mut Router,
+    device: &mut Device,
     origin: &str,
     destination: Place<'_>,
     trip: &Trip<'_>,
-    voice_elapsed: Duration,
-    tile_elapsed: Duration,
+    timing: Timing,
 ) -> Result<Screen, ScreenError> {
-    if voice_elapsed > VOICE_LIMIT {
+    if timing.voice > VOICE_LIMIT {
         return Err(ScreenError::VoiceTooSlow);
     }
-    if tile_elapsed > TILE_RENDER_LIMIT {
+    if timing.tile > TILE_RENDER_LIMIT {
         return Err(ScreenError::TileTooSlow);
     }
-    let destination_id = snap_to_node(graph, destination)?;
-    let request = Request {
-        origin,
-        destination: destination_id,
-        tile_id: trip.tile_id,
-        now: trip.now,
-        model_version_id: trip.model_version_id,
-        map_age_days: trip.map_age_days,
-        report_count: trip.report_count,
-        rolled_back: trip.rolled_back,
-        route_novelty: trip.route_novelty,
-        environment: trip.environment,
+    let destination = match destination {
+        Place::Node(id) => Destination::NodeId(id),
+        Place::Coordinate { lat, lon } => Destination::Coordinate { lat, lon },
     };
-    let route = router
-        .route(graph, &request)
-        .ok_or(ScreenError::Unreachable)?;
+    let outcome = device
+        .route(origin, destination, trip)
+        .map_err(ScreenError::Device)?;
     Ok(Screen {
         platform,
-        edge_ids: route.edge_ids,
-        warning: route.confidence.warns(),
+        tile_id: outcome.tile_id,
+        warning: outcome.route.confidence.warns(),
+        edge_ids: outcome.route.edge_ids,
         voice_issued: true,
         tile_drawn: true,
     })
 }
 
-pub fn open_cache(key: &[u8]) -> Result<LocalStore, StoreError> {
-    LocalStore::open(key)
-}
-
-pub fn clear_local(store: &mut LocalStore, training: &mut TrainingRecord) {
-    store.clear();
-    training.clear_opt_in();
-}
-
-fn snap_to_node<'a>(graph: &'a Graph, destination: Place<'_>) -> Result<&'a str, ScreenError> {
-    let destination = match destination {
-        Place::Node(id) => Destination::NodeId(id),
-        Place::Coordinate { lat, lon } => Destination::Coordinate { lat, lon },
-    };
-    snap::resolve(graph, destination).map_err(|_| ScreenError::Rejected)
+/// The clear-data action. Sealed routes and the training opt-in go.
+pub fn clear_local(device: &mut Device) {
+    device.clear_local_data();
 }

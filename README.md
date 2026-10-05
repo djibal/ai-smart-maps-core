@@ -33,4 +33,4 @@ The newest tile whose graph contains both node ids is the one used for those nod
 
 `Device` runs the whole flow on one device: admit a tile, choose the newest tile that covers both nodes, snap, route, score, attach confidence, seal the route, and write the log. A tampered artifact rolls back to `previous_id` and lowers confidence. The deterministic cost decides the route.
 
-The iOS, Android, and web adapters call this core. Each one snaps, draws the returned edge list, and stays under 10% of the core source.
+The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source.
