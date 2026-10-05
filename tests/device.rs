@@ -639,6 +639,27 @@ fn sealed_reports_raise_the_route_report_count() {
 }
 
 #[test]
+fn installing_a_scorer_drops_the_cached_route_on_the_same_device() {
+    let mut device = device();
+    device
+        .load_tile(local_tile("t", "2026-09-01T00:00:00Z"), Origin::Local)
+        .unwrap();
+    let first = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(first.route.model_version_id, "scorer-1");
+    assert_eq!(first.prediction.unwrap().version_id, "scorer-1");
+
+    device.install_scorer(&scorer("scorer-2", Some("scorer-1")), ZERO);
+    let after = device
+        .route("a", Destination::NodeId("c"), &trip(Environment::Simple))
+        .unwrap();
+    assert_eq!(after.route.model_version_id, "scorer-2");
+    assert_eq!(after.prediction.unwrap().version_id, "scorer-2");
+    assert_eq!(after.route.edge_ids, first.route.edge_ids);
+}
+
+#[test]
 fn a_device_without_a_scorer_does_not_route() {
     let mut device = Device::open(&CACHE_KEY, &source_public_key()).unwrap();
     device

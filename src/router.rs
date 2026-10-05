@@ -63,6 +63,13 @@ impl Router {
         self.cache.retain(|(_, _, cached, _), _| cached != tile_id);
     }
 
+    /// Drops every cached route. A new scorer calls this so the next
+    /// request runs on the new bytes, not a route that still names the
+    /// previous `model_version_id`.
+    pub fn forget_all(&mut self) {
+        self.cache.clear();
+    }
+
     /// Returns the stored route when the origin, destination, and tile id
     /// match. Otherwise computes one. An unreachable destination returns
     /// `None` and is not cached. A result past [`INITIAL_ROUTE_LIMIT`] is

@@ -132,6 +132,7 @@ impl Device {
             previous_id: record.previous_id.clone(),
             presented: bytes.to_vec(),
         });
+        self.router.forget_all();
         let _ = self.store.put(&model_key(&record.id), bytes);
         let _ = self
             .store
@@ -520,9 +521,7 @@ impl Device {
     /// only after the platform reloads tiles and a scorer. The diagnostic
     /// log stays; it holds edge ids, durations, and error codes only.
     fn forget_everything(&mut self) {
-        for id in self.budget.tile_ids() {
-            self.router.forget_tile(&id);
-        }
+        self.router.forget_all();
         self.tiles = TileCache::new();
         self.budget = Budget::with_limit(self.budget.limit());
         self.scorer.uninstall_all();
