@@ -77,6 +77,21 @@ pub fn show(
     })
 }
 
+/// The sealed cache as one encrypted blob for the platform to write to
+/// its app storage. Still encrypted under the secure-store key.
+pub fn save(device: &Device) -> Result<Vec<u8>, StoreError> {
+    device.export_all()
+}
+
+/// Reopens the device from a blob written by [`save`]. Tiles, scorers,
+/// routes, reports, and the reporter key come back. A blob sealed under
+/// another key is refused.
+pub fn restore(cache_key: &[u8], map_source_key: &[u8], blob: &[u8]) -> Result<Device, StoreError> {
+    let mut device = open(cache_key, map_source_key)?;
+    device.import_all(blob)?;
+    Ok(device)
+}
+
 /// The clear-data action. Sealed routes and the training opt-in go.
 pub fn clear_local(device: &mut Device) {
     device.clear_local_data();

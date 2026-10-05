@@ -73,6 +73,53 @@ impl LocalStore {
         self.records.is_empty()
     }
 
+    /// Every sealed record in one blob, encrypted again under the cache key
+    /// so record names stay private at rest. The platform persists this.
+    pub fn seal_all(&self) -> Result<Vec<u8>, StoreError> {
+        let mut names: Vec<&String> = self.records.keys().collect();
+        names.sort();
+        let mut frame = Vec::new();
+        for name in names {
+            let sealed = &self.records[name];
+            frame.extend((name.len() as u32).to_be_bytes());
+            frame.extend(name.as_bytes());
+            frame.extend((sealed.len() as u32).to_be_bytes());
+            frame.extend(sealed);
+        }
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = self
+            .cipher
+            .encrypt(&nonce, frame.as_slice())
+            .map_err(|_| StoreError::Rejected)?;
+        let mut out = nonce.to_vec();
+        out.extend(ciphertext);
+        Ok(out)
+    }
+
+    /// Replaces every record with the blob from [`Self::seal_all`]. A blob
+    /// sealed under another key is refused and the records stay.
+    pub fn open_all(&mut self, blob: &[u8]) -> Result<(), StoreError> {
+        if blob.len() < NONCE_LEN {
+            return Err(StoreError::Rejected);
+        }
+        let (nonce, ciphertext) = blob.split_at(NONCE_LEN);
+        let frame = self
+            .cipher
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .map_err(|_| StoreError::Rejected)?;
+        let mut records = HashMap::new();
+        let mut rest = frame.as_slice();
+        while !rest.is_empty() {
+            let (name, after) = take(rest)?;
+            let (sealed, after) = take(after)?;
+            let name = String::from_utf8(name.to_vec()).map_err(|_| StoreError::Rejected)?;
+            records.insert(name, sealed.to_vec());
+            rest = after;
+        }
+        self.records = records;
+        Ok(())
+    }
+
     /// Record names starting with `prefix`, sorted.
     pub fn names_with_prefix(&self, prefix: &str) -> Vec<String> {
         let mut names: Vec<String> = self
@@ -96,4 +143,10 @@ impl LocalStore {
     pub fn import(&mut self, name: &str, sealed: Vec<u8>) {
         self.records.insert(name.to_string(), sealed);
     }
+}
+
+fn take(bytes: &[u8]) -> Result<(&[u8], &[u8]), StoreError> {
+    let (len, after) = bytes.split_at_checked(4).ok_or(StoreError::Rejected)?;
+    let len = u32::from_be_bytes(len.try_into().map_err(|_| StoreError::Rejected)?) as usize;
+    after.split_at_checked(len).ok_or(StoreError::Rejected)
 }

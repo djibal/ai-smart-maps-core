@@ -39,4 +39,6 @@ The newest tile whose graph contains both node ids is the one used for those nod
 
 `Device::report` makes a local report: the observation carries the reporter key, is applied to every cached tile that has the edge, drops the cached routes on those tiles so the next request routes again, and is sealed under `report:{edge_id}:{now}`. An edge no tile knows is logged as `unknown_edge` and refused before sealing. `retain_reports` applies the 90-day rule to the sealed records and `clear_local_data` deletes them.
 
+`Device::export_all` seals the whole cache into one blob, encrypted again under the cache key so record names stay private, and `import_all` rebuilds a device from it: tiles, scorer artifacts and their records, routes, reports, and the reporter key. A blob from another key is refused and nothing changes. The shell adapter exposes these as `save` and `restore`; `clear_local_data` still leaves the in-memory tiles and scorer for the session.
+
 The iOS, Android, and web adapters call `Device`. No adapter calls the router or snaps on its own. Each one draws the returned edge list and stays under 10% of the core source.

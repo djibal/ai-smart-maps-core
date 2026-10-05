@@ -4,10 +4,11 @@ use ai_smart_maps_core::confidence::{Environment, RouteNovelty};
 use ai_smart_maps_core::contracts::{ModelVersionRecord, TileRecord};
 use ai_smart_maps_core::graph::{Constraint, Edge, Graph, Node, Source};
 use ai_smart_maps_core::scorer::Features;
+use ai_smart_maps_core::store::StoreError;
 use ai_smart_maps_core::tiles::Origin;
 use ai_smart_maps_core::training::TrainingPair;
 use ai_smart_maps_shell::{
-    clear_local, open, show, Device, DeviceError, Place, ScreenError, Timing, Trip,
+    clear_local, open, restore, save, show, Device, DeviceError, Place, ScreenError, Timing, Trip,
     TILE_RENDER_LIMIT, VOICE_LIMIT,
 };
 
@@ -97,6 +98,62 @@ fn the_screen_draws_the_core_edge_list_and_snaps_before_routing() {
     assert!(!screen.warning);
     assert!(screen.voice_issued && screen.tile_drawn);
     assert!(device.sealed_route("a", "b", "tile-1").is_some());
+}
+
+#[test]
+fn a_saved_cache_reopens_with_the_same_route_scorer_and_reporter_key() {
+    let mut device = line();
+    let first = show(
+        "android",
+        &mut device,
+        "a",
+        Place::Node("b"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    let key = device.reporter_key().unwrap();
+    let blob = save(&device).unwrap();
+    assert!(!String::from_utf8_lossy(&blob).contains("tile-1"));
+    assert!(!String::from_utf8_lossy(&blob).contains(&key.hex()));
+
+    let mut reopened = restore(&[9u8; 32], &[0u8; 32], &blob).unwrap();
+    assert_eq!(reopened.tile_ids(), vec!["tile-1".to_string()]);
+    assert_eq!(reopened.budget_used(), device.budget_used());
+    assert_eq!(
+        reopened.sealed_route("a", "b", "tile-1").unwrap().edge_ids,
+        first.edge_ids
+    );
+    assert_eq!(reopened.reporter_key().unwrap(), key);
+    let again = show(
+        "android",
+        &mut reopened,
+        "a",
+        Place::Node("b"),
+        &trip(Environment::Simple),
+        Timing::default(),
+    )
+    .unwrap();
+    assert_eq!(again.edge_ids, first.edge_ids);
+    assert_eq!(again.tile_id, "tile-1");
+
+    let mut empty = open(&[9u8; 32], &[0u8; 32]).unwrap();
+    assert_eq!(
+        show(
+            "android",
+            &mut empty,
+            "a",
+            Place::Node("b"),
+            &trip(Environment::Simple),
+            Timing::default(),
+        ),
+        Err(ScreenError::Device(DeviceError::NoScorer))
+    );
+
+    assert_eq!(
+        restore(&[8u8; 32], &[0u8; 32], &blob).err(),
+        Some(StoreError::Rejected)
+    );
 }
 
 #[test]

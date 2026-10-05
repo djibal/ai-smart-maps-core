@@ -96,11 +96,19 @@ impl Device {
             .map_err(|_| DeviceError::TileRejected)?;
         self.budget
             .insert_tile(&id, &observed_at, bytes.len() as u64);
-        self.tiles.retain_ids(&self.budget.tile_ids());
+        let kept = self.budget.tile_ids();
+        self.tiles.retain_ids(&kept);
+        let _ = self.store.put(&tile_key(&id), &bytes);
+        for name in self.store.names_with_prefix("tile:") {
+            if !kept.iter().any(|id| tile_key(id) == name) {
+                self.store.remove(&name);
+            }
+        }
         Ok(())
     }
 
     /// Installs the artifact named by the model version and makes it active.
+    /// The artifact and its record are sealed so a reopened device has them.
     pub fn install_scorer(&mut self, record: &ModelVersionRecord, bytes: &[u8]) {
         self.scorer.install(&record.id, bytes);
         self.budget.insert_model(
@@ -115,6 +123,77 @@ impl Device {
             previous_id: record.previous_id.clone(),
             presented: bytes.to_vec(),
         });
+        let _ = self.store.put(&model_key(&record.id), bytes);
+        let _ = self
+            .store
+            .put(&model_record_key(&record.id), &encode_model_record(record));
+        let _ = self.store.put(ACTIVE_RECORD, record.id.as_bytes());
+    }
+
+    /// The whole sealed cache as one encrypted blob for the platform to
+    /// persist: tiles, scorer artifacts, routes, reports, and the reporter
+    /// key. Still encrypted under the cache key.
+    pub fn export_all(&self) -> Result<Vec<u8>, StoreError> {
+        self.store.seal_all()
+    }
+
+    /// Rebuilds the device from a blob made by [`Self::export_all`] under
+    /// the same cache key. Tiles and scorers come back in memory and in
+    /// the budget. A blob from another key is refused and nothing changes.
+    pub fn import_all(&mut self, blob: &[u8]) -> Result<(), StoreError> {
+        self.store.open_all(blob)?;
+        self.tiles = TileCache::new();
+        self.budget = Budget::with_limit(self.budget.limit());
+        self.scorer = Host::new();
+        self.active = None;
+        self.router = Router::new();
+
+        for name in self.store.names_with_prefix("tile:") {
+            let bytes = self.store.get(&name)?;
+            let Ok(tile) = crate::contracts::decode_tile(&bytes) else {
+                continue;
+            };
+            let id = tile.id.clone();
+            let observed_at = tile.observed_at.clone();
+            if self
+                .tiles
+                .insert(tile, Origin::Local, &self.map_source_key)
+                .is_ok()
+            {
+                self.budget
+                    .insert_tile(&id, &observed_at, bytes.len() as u64);
+            }
+        }
+        self.tiles.retain_ids(&self.budget.tile_ids());
+
+        let active_id = self
+            .store
+            .get(ACTIVE_RECORD)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        for name in self.store.names_with_prefix("model-record:") {
+            let Some(record) = decode_model_record(&self.store.get(&name)?) else {
+                continue;
+            };
+            let bytes = self.store.get(&model_key(&record.id))?;
+            let active = active_id.as_deref() == Some(record.id.as_str());
+            self.scorer.install(&record.id, &bytes);
+            self.budget.insert_model(
+                &record.id,
+                &record.created_at,
+                bytes.len() as u64,
+                record.previous_id.as_deref(),
+                active,
+            );
+            if active {
+                self.active = Some(ActiveScorer {
+                    id: record.id.clone(),
+                    previous_id: record.previous_id.clone(),
+                    presented: bytes,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The bytes the platform presents at startup. A later mismatch with
@@ -389,4 +468,55 @@ fn route_key(origin: &str, destination: &str, tile_id: &str) -> String {
 
 fn report_key(edge_id: &str, now: &str) -> String {
     format!("report:{edge_id}:{now}")
+}
+
+fn tile_key(id: &str) -> String {
+    format!("tile:{id}")
+}
+
+fn model_key(id: &str) -> String {
+    format!("model:{id}")
+}
+
+fn model_record_key(id: &str) -> String {
+    format!("model-record:{id}")
+}
+
+const ACTIVE_RECORD: &str = "active-scorer";
+
+/// Length-prefixed local record for the sealed cache. Not a contract.
+fn encode_model_record(record: &ModelVersionRecord) -> Vec<u8> {
+    let mut out = Vec::new();
+    for field in [
+        record.id.as_str(),
+        record.artifact.as_str(),
+        record.created_at.as_str(),
+        record.previous_id.as_deref().unwrap_or(""),
+    ] {
+        out.extend((field.len() as u32).to_be_bytes());
+        out.extend(field.as_bytes());
+    }
+    out
+}
+
+fn decode_model_record(bytes: &[u8]) -> Option<ModelVersionRecord> {
+    let mut rest = bytes;
+    let mut fields = Vec::with_capacity(4);
+    for _ in 0..4 {
+        let (len, after) = rest.split_at_checked(4)?;
+        let len = u32::from_be_bytes(len.try_into().ok()?) as usize;
+        let (field, after) = after.split_at_checked(len)?;
+        fields.push(String::from_utf8(field.to_vec()).ok()?);
+        rest = after;
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    let previous_id = fields.pop()?;
+    Some(ModelVersionRecord {
+        previous_id: (!previous_id.is_empty()).then_some(previous_id),
+        created_at: fields.pop()?,
+        artifact: fields.pop()?,
+        id: fields.pop()?,
+    })
 }
